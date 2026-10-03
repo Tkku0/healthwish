@@ -20,7 +20,7 @@ class DayViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            // Load local/initial today
+            // Load initial today
             DayRepository.loadDay(uid)?.let { _me.value = it }
 
             // Live listen to current user's today updates
@@ -30,9 +30,17 @@ class DayViewModel : ViewModel() {
                 }
             }
 
-            // Auto discover GF from couple doc
+            // Auto-join couple doc & discover partner UID
             DayRepository.getGfUid(uid)?.let { gfId ->
                 watchGf(gfId)
+            }
+
+            // Live listener on couple doc: Jaise hi GF login karegi, uska UID auto discover hoga!
+            DayRepository.listenCouple { members ->
+                val gfId = members.firstOrNull { it != uid }
+                if (gfId != null) {
+                    watchGf(gfId)
+                }
             }
         }
     }
@@ -55,7 +63,7 @@ class DayViewModel : ViewModel() {
         )
         _me.value = updated
         viewModelScope.launch {
-            runCatching { DayRepository.saveDay(updated) }
+            DayRepository.saveDay(updated)
         }
     }
 

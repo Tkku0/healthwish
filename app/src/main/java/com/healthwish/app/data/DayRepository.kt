@@ -9,16 +9,32 @@ import java.time.format.DateTimeFormatter
 
 object DayRepository {
     private val db get() = FirebaseFirestore.getInstance()
-    private const val COUPLE_ID = "LOVE1" // Couple Doc ID
+    private const val COUPLE_ID = "LOVE1"
 
     fun todayKey() = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
     fun docId(dateKey: String, ownerUid: String) = "${dateKey}_${ownerUid}"
 
+    // Auto discover GF's UID from couple doc; agar doc nahi bana to auto bana dega
     suspend fun getGfUid(myUid: String, coupleId: String = COUPLE_ID): String? {
         return try {
-            val doc = db.collection("couples").document(coupleId).get().await()
-            val members = doc.get("members") as? List<*>
-            members?.mapNotNull { it as? String }?.firstOrNull { it != myUid }
+            val docRef = db.collection("couples").document(coupleId)
+            val doc = docRef.get().await()
+
+            if (!doc.exists()) {
+                // Pehli baar user ne login kiya to auto create LOVE1 doc
+                docRef.set(mapOf("members" to listOf(myUid)))
+                null
+            } else {
+                val members = (doc.get("members") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                if (!members.contains(myUid)) {
+                    // Agar dusra partner (GF) login kare to uska UID bhi auto add kar do
+                    val updated = members + myUid
+                    docRef.update("members", updated)
+                    members.firstOrNull { it != myUid }
+                } else {
+                    members.firstOrNull { it != myUid }
+                }
+            }
         } catch (e: Exception) {
             null
         }
@@ -36,9 +52,13 @@ object DayRepository {
 
     suspend fun saveDay(log: DayLog, coupleId: String = COUPLE_ID) {
         val targetId = log.id.ifEmpty { docId(log.dateKey, log.ownerUid) }
-        db.collection("couples").document(coupleId)
-            .collection("days").document(targetId)
-            .set(log.copy(id = targetId, coupleId = coupleId))
+        try {
+            db.collection("couples").document(coupleId)
+                .collection("days").document(targetId)
+                .set(log.copy(id = targetId, coupleId = coupleId))
+        } catch (e: Exception) {
+            // Firestore write error logged silently
+        }
     }
 
     // Real-time: Me / GF live updates
@@ -47,6 +67,15 @@ object DayRepository {
             .collection("days").document(docId(todayKey(), ownerUid))
             .addSnapshotListener { s, _ ->
                 onChange(s?.toObject(DayLog::class.java))
+            }
+    }
+
+    // Listen to changes in the couple doc to detect when partner registers
+    fun listenCouple(coupleId: String = COUPLE_ID, onChange: (List<String>) -> Unit): ListenerRegistration {
+        return db.collection("couples").document(coupleId)
+            .addSnapshotListener { s, _ ->
+                val members = (s?.get("members") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                onChange(members)
             }
     }
 
