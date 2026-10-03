@@ -13,10 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.firebase.auth.FirebaseAuth
 import com.healthwish.app.ui.components.AccentPink
-import com.healthwish.app.ui.components.CardBg
-import com.healthwish.app.ui.screens.ExportScreen
 import com.healthwish.app.ui.screens.HistoryScreen
 import com.healthwish.app.ui.screens.SettingsScreen
 import com.healthwish.app.ui.screens.TodayScreen
@@ -25,9 +22,8 @@ import com.healthwish.app.viewmodel.DayViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthWishApp(onLogout: () -> Unit = {}) {
-    var selectedScreen by remember { mutableIntStateOf(0) }
+    var selectedScreen by remember { mutableIntStateOf(0) } // 0=Today, 1=History, 2=Settings
     val dayVm: DayViewModel = viewModel()
-    val uid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
 
     Scaffold(
         containerColor = Color(0xFF0D0D12),
@@ -79,19 +75,6 @@ fun HealthWishApp(onLogout: () -> Unit = {}) {
                 NavigationBarItem(
                     selected = selectedScreen == 2,
                     onClick = { selectedScreen = 2 },
-                    icon = { Icon(Icons.Rounded.FileDownload, contentDescription = "Export") },
-                    label = { Text("Export") },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentPink,
-                        selectedTextColor = AccentPink,
-                        indicatorColor = AccentPink.copy(alpha = 0.2f),
-                        unselectedIconColor = Color(0xFF8E8EA0),
-                        unselectedTextColor = Color(0xFF8E8EA0)
-                    )
-                )
-                NavigationBarItem(
-                    selected = selectedScreen == 3,
-                    onClick = { selectedScreen = 3 },
                     icon = { Icon(Icons.Rounded.Settings, contentDescription = "Settings") },
                     label = { Text("Settings") },
                     colors = NavigationBarItemDefaults.colors(
@@ -113,9 +96,8 @@ fun HealthWishApp(onLogout: () -> Unit = {}) {
         ) {
             when (selectedScreen) {
                 0 -> TodayScreen(vm = dayVm)
-                1 -> HistoryScreen(currentUid = uid)
-                2 -> ExportScreen(currentUid = uid)
-                3 -> SettingsScreen(currentUid = uid, onLogout = onLogout)
+                1 -> HistoryScreen()
+                2 -> SettingsScreen(onLogout = onLogout)
             }
         }
     }

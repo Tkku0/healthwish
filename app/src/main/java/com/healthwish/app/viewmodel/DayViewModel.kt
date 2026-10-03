@@ -2,7 +2,6 @@ package com.healthwish.app.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.auth.FirebaseAuth
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
 import com.healthwish.app.model.HabitTask
@@ -10,72 +9,54 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class DayViewModel : ViewModel() {
-    private val uid get() = FirebaseAuth.getInstance().currentUser?.uid ?: "local"
-    private val name get() = FirebaseAuth.getInstance().currentUser?.displayName ?: "Me"
+    private val today = DayRepository.todayKey()
 
-    private val _me = MutableStateFlow(DayLog(ownerUid = uid, dateKey = DayRepository.todayKey()))
-    private val _gf = MutableStateFlow<DayLog?>(null)
-    val me: StateFlow<DayLog> = _me.asStateFlow()
-    val gf: StateFlow<DayLog?> = _gf.asStateFlow()
+    // 2 explicit, clean profiles: Tkku & Shumu
+    private val _tkkuLog = MutableStateFlow(DayLog(ownerName = "Tkku", dateKey = today))
+    private val _shumuLog = MutableStateFlow(DayLog(ownerName = "Shumu", dateKey = today))
+
+    val tkkuLog: StateFlow<DayLog> = _tkkuLog.asStateFlow()
+    val shumuLog: StateFlow<DayLog> = _shumuLog.asStateFlow()
 
     init {
         viewModelScope.launch {
-            // Load initial today
-            DayRepository.loadDay(uid)?.let { _me.value = it }
+            // Load initial
+            DayRepository.loadDay("Tkku", today)?.let { _tkkuLog.value = it }
+            DayRepository.loadDay("Shumu", today)?.let { _shumuLog.value = it }
 
-            // Live listen to current user's today updates
-            DayRepository.listenToday(uid) { log ->
-                if (log != null) {
-                    _me.value = log
-                }
+            // Real-time live listener for Tkku
+            DayRepository.listenDay("Tkku", today) { log ->
+                if (log != null) _tkkuLog.value = log
             }
 
-            // Auto-join couple doc & discover partner UID
-            DayRepository.getGfUid(uid)?.let { gfId ->
-                watchGf(gfId)
-            }
-
-            // Live listener on couple doc: Jaise hi GF login karegi, uska UID auto discover hoga!
-            DayRepository.listenCouple { members ->
-                val gfId = members.firstOrNull { it != uid }
-                if (gfId != null) {
-                    watchGf(gfId)
-                }
+            // Real-time live listener for Shumu
+            DayRepository.listenDay("Shumu", today) { log ->
+                if (log != null) _shumuLog.value = log
             }
         }
     }
 
-    fun watchGf(gfUid: String) {
-        DayRepository.listenToday(gfUid) { log ->
-            _gf.value = log
+    fun updateProfile(profile: String, fn: (DayLog) -> DayLog) {
+        if (profile.equals("Tkku", ignoreCase = true)) {
+            val updated = fn(_tkkuLog.value.copy(ownerName = "Tkku", dateKey = today))
+            _tkkuLog.value = updated
+            viewModelScope.launch { DayRepository.saveDay(updated, "Tkku") }
+        } else {
+            val updated = fn(_shumuLog.value.copy(ownerName = "Shumu", dateKey = today))
+            _shumuLog.value = updated
+            viewModelScope.launch { DayRepository.saveDay(updated, "Shumu") }
         }
     }
 
-    fun update(fn: (DayLog) -> DayLog) {
-        val current = _me.value
-        val updated = fn(
-            current.copy(
-                ownerUid = uid,
-                ownerName = name,
-                dateKey = DayRepository.todayKey(),
-                id = DayRepository.docId(DayRepository.todayKey(), uid)
-            )
-        )
-        _me.value = updated
-        viewModelScope.launch {
-            DayRepository.saveDay(updated)
-        }
-    }
-
-    fun toggleTask(task: HabitTask) = update { l ->
+    fun toggleTask(profile: String, task: HabitTask) = updateProfile(profile) { l ->
         l.copy(tasks = l.tasks.map { if (it.id == task.id) it.copy(done = !it.done) else it })
     }
 
-    fun addCustomTask(title: String) = update { l ->
+    fun addCustomTask(profile: String, title: String) = updateProfile(profile) { l ->
         l.copy(tasks = l.tasks + HabitTask("c_${System.currentTimeMillis()}", title, "⭐", false, false))
     }
 
-    fun setMeal(type: String, text: String) = update { l ->
+    fun setMeal(profile: String, type: String, text: String) = updateProfile(profile) { l ->
         when (type) {
             "breakfast" -> l.copy(breakfast = text)
             "lunch" -> l.copy(lunch = text)
@@ -84,15 +65,15 @@ class DayViewModel : ViewModel() {
         }
     }
 
-    fun setSleep(wake: String, sleep: String, mood: String) = update { l ->
+    fun setSleep(profile: String, wake: String, sleep: String, mood: String) = updateProfile(profile) { l ->
         l.copy(wakeupTime = wake, sleepTime = sleep, sleepMood = mood)
     }
 
-    fun setDayMood(mood: String, note: String) = update { l ->
+    fun setDayMood(profile: String, mood: String, note: String) = updateProfile(profile) { l ->
         l.copy(dayMood = mood, dayNote = note)
     }
 
-    fun setWater(n: Int) = update { l ->
+    fun setWater(profile: String, n: Int) = updateProfile(profile) { l ->
         l.copy(waterGlasses = n)
     }
 }

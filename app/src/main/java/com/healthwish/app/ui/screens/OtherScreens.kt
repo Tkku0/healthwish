@@ -1,7 +1,7 @@
 package com.healthwish.app.ui.screens
 
+import android.app.DatePickerDialog
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,7 +12,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -25,16 +24,31 @@ import com.healthwish.app.model.DayLog
 import com.healthwish.app.security.AppLockManager
 import com.healthwish.app.ui.components.*
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(currentUid: String) {
+fun HistoryScreen() {
+    var selectedProfile by remember { mutableStateOf("Tkku") }
     var logs by remember { mutableStateOf<List<DayLog>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+    var specificDateLog by remember { mutableStateOf<DayLog?>(null) }
+    var selectedDateText by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
 
-    LaunchedEffect(currentUid) {
-        loading = true
-        logs = DayRepository.loadRange(currentUid, days = 30)
-        loading = false
+    fun loadData() {
+        scope.launch {
+            loading = true
+            logs = DayRepository.loadRange(selectedProfile, days = 60)
+            loading = false
+        }
+    }
+
+    LaunchedEffect(selectedProfile) {
+        selectedDateText = null
+        specificDateLog = null
+        loadData()
     }
 
     Column(
@@ -42,13 +56,75 @@ fun HistoryScreen(currentUid: String) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         SectionHeader(
-            title = "Past 30 Days History 🗓️",
-            subtitle = "Everything you logged date by date"
+            title = "Diet History 🗓️",
+            subtitle = "Jump to any date or browse past logs"
         )
+
+        // Profile switcher
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = selectedProfile == "Tkku",
+                onClick = { selectedProfile = "Tkku" },
+                shape = SegmentedButtonDefaults.itemShape(0, 2),
+                colors = SegmentedButtonDefaults.colors(activeContainerColor = AccentPink, activeContentColor = Color.White)
+            ) {
+                Text("Tkku's History", fontWeight = FontWeight.Bold)
+            }
+            SegmentedButton(
+                selected = selectedProfile == "Shumu",
+                onClick = { selectedProfile = "Shumu" },
+                shape = SegmentedButtonDefaults.itemShape(1, 2),
+                colors = SegmentedButtonDefaults.colors(activeContainerColor = AccentPurple, activeContentColor = Color.White)
+            ) {
+                Text("Shumu's History", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Jump to Date Button
+        OutlinedButton(
+            onClick = {
+                val cal = Calendar.getInstance()
+                DatePickerDialog(ctx, { _, y, m, d ->
+                    val chosen = String.format("%04d-%02d-%02d", y, m + 1, d)
+                    selectedDateText = chosen
+                    scope.launch {
+                        loading = true
+                        specificDateLog = DayRepository.loadDay(selectedProfile, chosen)
+                        loading = false
+                    }
+                }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show()
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(Icons.Rounded.DateRange, null, tint = AccentPink)
+            Spacer(Modifier.width(8.dp))
+            Text(if (selectedDateText == null) "📅 Jump to Specific Date" else "Showing: $selectedDateText (Tap to change)")
+        }
 
         if (loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AccentPink)
+            }
+        } else if (selectedDateText != null) {
+            val log = specificDateLog
+            if (log == null || (log.breakfast.isBlank() && log.lunch.isBlank() && log.dinner.isBlank() && log.wakeupTime.isBlank())) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No records found for $selectedDateText", color = TextMuted)
+                }
+            } else {
+                ModernCard {
+                    Text("Record for $selectedDateText", fontWeight = FontWeight.Bold, color = AccentPink, fontSize = 16.sp)
+                    if (log.wakeupTime.isNotBlank() || log.sleepMood.isNotBlank()) {
+                        Text("😴 Wake: ${log.wakeupTime} | Sleep: ${log.sleepTime} | Mood: ${log.sleepMood}", fontSize = 14.sp)
+                    }
+                    if (log.breakfast.isNotBlank()) Text("🌅 Breakfast: ${log.breakfast}", fontSize = 13.sp)
+                    if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
+                    if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
+                    if (log.snacks.isNotBlank()) Text("🍿 Snacks: ${log.snacks}", fontSize = 13.sp)
+                    Text("💧 Water: ${log.waterGlasses} glasses | Tasks: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
+                    if (log.dayNote.isNotBlank()) Text("💌 Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
+                }
             }
         } else if (logs.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -73,11 +149,12 @@ fun HistoryScreen(currentUid: String) {
                                 if (log.dayMood.isNotBlank()) Text("Day: ${log.dayMood}")
                             }
                         }
+                        if (log.wakeupTime.isNotBlank()) Text("😴 Wake: ${log.wakeupTime} | Sleep: ${log.sleepTime}", fontSize = 13.sp)
                         if (log.breakfast.isNotBlank()) Text("🌅 Breakfast: ${log.breakfast}", fontSize = 13.sp)
                         if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
                         if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
                         if (log.snacks.isNotBlank()) Text("🍿 Snacks: ${log.snacks}", fontSize = 13.sp)
-                        Text("💧 Water: ${log.waterGlasses} glasses | Rituals done: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
+                        Text("💧 Water: ${log.waterGlasses} glasses | Tasks done: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
                         if (log.dayNote.isNotBlank()) {
                             Text("Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
                         }
@@ -89,76 +166,66 @@ fun HistoryScreen(currentUid: String) {
 }
 
 @Composable
-fun ExportScreen(currentUid: String) {
+fun SettingsScreen(onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        SectionHeader(
-            title = "Export Diet Data 📊",
-            subtitle = "Export your complete food & sleep decisions for analysis"
-        )
-
-        ModernCard {
-            Text("Complete Diet History Summary", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text(
-                "Export your past logs to a clean CSV file. You can open it in Microsoft Excel, Google Sheets, or share it anywhere via WhatsApp or Email.",
-                color = TextMuted,
-                fontSize = 13.sp
-            )
-
-            Button(
-                onClick = {
-                    scope.launch {
-                        exporting = true
-                        try {
-                            val data = DayRepository.loadRange(currentUid, days = 365)
-                            if (data.isEmpty()) {
-                                Toast.makeText(ctx, "No data to export yet!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                val file = ExportHelper.exportCsv(ctx, data)
-                                ExportHelper.share(ctx, file)
-                            }
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                        } finally {
-                            exporting = false
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = AccentPink),
-                enabled = !exporting
-            ) {
-                if (exporting) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(22.dp))
-                } else {
-                    Icon(Icons.Rounded.Share, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Export & Share CSV File", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun SettingsScreen(currentUid: String, onLogout: () -> Unit) {
-    val ctx = LocalContext.current
     var isLockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(ctx)) }
     var pinText by remember { mutableStateOf("") }
     var backupPass by remember { mutableStateOf("") }
+    var exporting by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 90.dp)
     ) {
+        // Export Section in Settings
+        item {
+            SectionHeader(
+                title = "Data Export 📊",
+                subtitle = "Export diet history for analysis"
+            )
+            ModernCard {
+                Text("Export Complete History (CSV)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Generate a CSV file of Tkku and Shumu's complete records to open in Excel or Google Sheets.", color = TextMuted, fontSize = 13.sp)
+                Button(
+                    onClick = {
+                        scope.launch {
+                            exporting = true
+                            try {
+                                val tkkuData = DayRepository.loadRange("Tkku", 365)
+                                val shumuData = DayRepository.loadRange("Shumu", 365)
+                                val combined = (tkkuData + shumuData).sortedByDescending { it.dateKey }
+                                if (combined.isEmpty()) {
+                                    Toast.makeText(ctx, "No data to export yet!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val f = ExportHelper.exportCsv(ctx, combined)
+                                    ExportHelper.share(ctx, f)
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                exporting = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPink),
+                    enabled = !exporting
+                ) {
+                    if (exporting) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
+                    } else {
+                        Icon(Icons.Rounded.Share, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Export & Share CSV", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // App Lock
         item {
             SectionHeader(
                 title = "Security & App Lock 🔒",
@@ -210,6 +277,7 @@ fun SettingsScreen(currentUid: String, onLogout: () -> Unit) {
             }
         }
 
+        // Auto Backup
         item {
             SectionHeader(
                 title = "Encrypted Auto Backup 📦",
@@ -244,6 +312,7 @@ fun SettingsScreen(currentUid: String, onLogout: () -> Unit) {
             }
         }
 
+        // Logout
         item {
             ModernCard {
                 Button(
