@@ -20,28 +20,53 @@ class DayViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            // local today load
+            // Load local/initial today
             DayRepository.loadDay(uid)?.let { _me.value = it }
-            // live listen me
-            DayRepository.listenToday(uid) { it?.let { _me.value = it } }
+
+            // Live listen to current user's today updates
+            DayRepository.listenToday(uid) { log ->
+                if (log != null) {
+                    _me.value = log
+                }
+            }
+
+            // Auto discover GF from couple doc
+            DayRepository.getGfUid(uid)?.let { gfId ->
+                watchGf(gfId)
+            }
         }
     }
 
     fun watchGf(gfUid: String) {
-        DayRepository.listenToday(gfUid) { _gf.value = it }
+        DayRepository.listenToday(gfUid) { log ->
+            _gf.value = log
+        }
     }
 
     fun update(fn: (DayLog) -> DayLog) {
-        _me.value = fn(_me.value.copy(ownerUid = uid, ownerName = name, dateKey = DayRepository.todayKey(), id = DayRepository.docId(DayRepository.todayKey(), uid)))
-        viewModelScope.launch { runCatching { DayRepository.saveDay(_me.value) } }
+        val current = _me.value
+        val updated = fn(
+            current.copy(
+                ownerUid = uid,
+                ownerName = name,
+                dateKey = DayRepository.todayKey(),
+                id = DayRepository.docId(DayRepository.todayKey(), uid)
+            )
+        )
+        _me.value = updated
+        viewModelScope.launch {
+            runCatching { DayRepository.saveDay(updated) }
+        }
     }
 
     fun toggleTask(task: HabitTask) = update { l ->
         l.copy(tasks = l.tasks.map { if (it.id == task.id) it.copy(done = !it.done) else it })
     }
+
     fun addCustomTask(title: String) = update { l ->
         l.copy(tasks = l.tasks + HabitTask("c_${System.currentTimeMillis()}", title, "⭐", false, false))
     }
+
     fun setMeal(type: String, text: String) = update { l ->
         when (type) {
             "breakfast" -> l.copy(breakfast = text)
@@ -50,7 +75,16 @@ class DayViewModel : ViewModel() {
             else -> l.copy(snacks = text)
         }
     }
-    fun setSleep(wake: String, sleep: String, mood: String) = update { l -> l.copy(wakeupTime = wake, sleepTime = sleep, sleepMood = mood) }
-    fun setDayMood(mood: String, note: String) = update { l -> l.copy(dayMood = mood, dayNote = note) }
-    fun setWater(n: Int) = update { l -> l.copy(waterGlasses = n) }
+
+    fun setSleep(wake: String, sleep: String, mood: String) = update { l ->
+        l.copy(wakeupTime = wake, sleepTime = sleep, sleepMood = mood)
+    }
+
+    fun setDayMood(mood: String, note: String) = update { l ->
+        l.copy(dayMood = mood, dayNote = note)
+    }
+
+    fun setWater(n: Int) = update { l ->
+        l.copy(waterGlasses = n)
+    }
 }
