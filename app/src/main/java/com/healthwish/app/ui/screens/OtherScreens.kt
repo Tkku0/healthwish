@@ -252,7 +252,7 @@ fun SettingsScreen(currentUid: String, onLogout: () -> Unit) {
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
                 ) {
-                    Icon(Icons.Default.ExitToApp, null)
+                    Icon(Icons.Rounded.ExitToApp, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Logout", fontWeight = FontWeight.Bold)
                 }
