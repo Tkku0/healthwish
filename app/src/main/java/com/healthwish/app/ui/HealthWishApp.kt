@@ -12,6 +12,7 @@ import com.healthwish.app.model.DayLog
 import com.healthwish.app.model.HabitTask
 
 // Professional cozy UI: Me/GF tabs + Today timeline + Sleep + Mood
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HealthWishApp(onLogout: () -> Unit = {}) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0=Me 1=GF
