@@ -13,6 +13,7 @@ object DayRepository {
     private const val COUPLE_ID = "LOVE1"
 
     fun todayKey() = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
+    fun yesterdayKey() = LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_DATE)
     fun docId(dateKey: String, profile: String) = "${dateKey}_${profile.lowercase()}"
 
     suspend fun loadDay(profile: String, dateKey: String = todayKey()): DayLog? {

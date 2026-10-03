@@ -28,14 +28,52 @@ import com.healthwish.app.ui.components.*
 import com.healthwish.app.viewmodel.DayViewModel
 import java.util.Calendar
 
+// Helper function to calculate duration between sleep time (last night) and wakeup time (morning)
+fun calculateSleepHours(sleepStr: String, wakeStr: String): String? {
+    if (sleepStr.isBlank() || wakeStr.isBlank()) return null
+    return try {
+        fun toMinutes(s: String): Int {
+            // formats: "11:30 PM", "07:00 AM", "23:30", "7:00"
+            val clean = s.trim().uppercase()
+            val isPM = clean.contains("PM")
+            val isAM = clean.contains("AM")
+            val parts = clean.replace("AM", "").replace("PM", "").trim().split(":")
+            var h = parts[0].toInt()
+            val m = parts[1].toInt()
+            if (isPM && h < 12) h += 12
+            if (isAM && h == 12) h = 0
+            return h * 60 + m
+        }
+        val sleepMin = toMinutes(sleepStr)
+        val wakeMin = toMinutes(wakeStr)
+        val diffMin = if (wakeMin >= sleepMin) {
+            wakeMin - sleepMin
+        } else {
+            (1440 - sleepMin) + wakeMin
+        }
+        val hours = diffMin / 60
+        val mins = diffMin % 60
+        if (mins == 0) "$hours hrs" else "${hours}h ${mins}m"
+    } catch (e: Exception) {
+        null
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(vm: DayViewModel) {
-    // Top Tabs: Tkku & Shumu
     var selectedProfile by remember { mutableStateOf("Tkku") }
     val tkkuLog by vm.tkkuLog.collectAsState()
     val shumuLog by vm.shumuLog.collectAsState()
+    val tkkuYday by vm.tkkuYesterday.collectAsState()
+    val shumuYday by vm.shumuYesterday.collectAsState()
+
     val activeLog = if (selectedProfile == "Tkku") tkkuLog else shumuLog
+    val ydayLog = if (selectedProfile == "Tkku") tkkuYday else shumuYday
+
+    // Calculate sleep duration using yesterday's sleep time if available, or today's sleep time
+    val lastNightSleepTime = ydayLog?.sleepTime?.ifBlank { activeLog.sleepTime } ?: activeLog.sleepTime
+    val calculatedSleepDuration = calculateSleepHours(lastNightSleepTime, activeLog.wakeupTime)
 
     var editingMealType by remember { mutableStateOf<String?>(null) }
     var editingMealValue by remember { mutableStateOf("") }
@@ -76,7 +114,7 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality (Upar aayega)
+        // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality (With live calculated sleep hours!)
         item {
             SectionHeader(
                 title = "1. Sleep & Wake-up 😴",
@@ -122,7 +160,30 @@ fun TodayScreen(vm: DayViewModel) {
                     }
                 }
 
-                Text("Neend kaisi thi?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                // Header with calculated sleep hours directly displayed!
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Neend kaisi thi?", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    if (calculatedSleepDuration != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AccentPink.copy(alpha = 0.15f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentPink.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                "💤 Slept: $calculatedSleepDuration",
+                                color = AccentPink,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceAround

@@ -10,7 +10,10 @@ data class HabitTask(
     val done: Boolean = false,
     val isDefault: Boolean = true,
     val time: String = "" // optional HH:mm
-)
+) {
+    // Firestore requires standard getters/setters or no-arg constructor
+    fun getIsDefault() = isDefault
+}
 
 data class DayLog(
     val id: String = "",

@@ -15,14 +15,23 @@ class DayViewModel : ViewModel() {
     private val _tkkuLog = MutableStateFlow(DayLog(ownerName = "Tkku", dateKey = today))
     private val _shumuLog = MutableStateFlow(DayLog(ownerName = "Shumu", dateKey = today))
 
+    // Yesterday's logs to accurately calculate last night sleep hours
+    private val _tkkuYesterday = MutableStateFlow<DayLog?>(null)
+    private val _shumuYesterday = MutableStateFlow<DayLog?>(null)
+
     val tkkuLog: StateFlow<DayLog> = _tkkuLog.asStateFlow()
     val shumuLog: StateFlow<DayLog> = _shumuLog.asStateFlow()
+    val tkkuYesterday: StateFlow<DayLog?> = _tkkuYesterday.asStateFlow()
+    val shumuYesterday: StateFlow<DayLog?> = _shumuYesterday.asStateFlow()
 
     init {
         viewModelScope.launch {
+            val yday = DayRepository.yesterdayKey()
             // Load initial
             DayRepository.loadDay("Tkku", today)?.let { _tkkuLog.value = it }
             DayRepository.loadDay("Shumu", today)?.let { _shumuLog.value = it }
+            DayRepository.loadDay("Tkku", yday)?.let { _tkkuYesterday.value = it }
+            DayRepository.loadDay("Shumu", yday)?.let { _shumuYesterday.value = it }
 
             // Real-time live listener for Tkku
             DayRepository.listenDay("Tkku", today) { log ->
