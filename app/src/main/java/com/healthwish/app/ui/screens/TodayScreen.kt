@@ -25,15 +25,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.healthwish.app.model.DayLog
 import com.healthwish.app.ui.components.*
+import com.healthwish.app.utils.PreferenceHelper
+import com.healthwish.app.utils.ScreenTimeHelper
 import com.healthwish.app.viewmodel.DayViewModel
 import java.util.Calendar
 
-// Helper function to calculate duration between sleep time (last night) and wakeup time (morning)
+// Helper function: Strictly requires previous night's sleep time!
 fun calculateSleepHours(sleepStr: String, wakeStr: String): String? {
     if (sleepStr.isBlank() || wakeStr.isBlank()) return null
     return try {
         fun toMinutes(s: String): Int {
-            // formats: "11:30 PM", "07:00 AM", "23:30", "7:00"
             val clean = s.trim().uppercase()
             val isPM = clean.contains("PM")
             val isAM = clean.contains("AM")
@@ -62,7 +63,10 @@ fun calculateSleepHours(sleepStr: String, wakeStr: String): String? {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(vm: DayViewModel) {
-    var selectedProfile by remember { mutableStateOf("Tkku") }
+    val ctx = LocalContext.current
+    var myDeviceProfile by remember { mutableStateOf(PreferenceHelper.getMyProfile(ctx)) }
+    var selectedProfile by remember { mutableStateOf(myDeviceProfile ?: "Tkku") }
+
     val tkkuLog by vm.tkkuLog.collectAsState()
     val shumuLog by vm.shumuLog.collectAsState()
     val tkkuYday by vm.tkkuYesterday.collectAsState()
@@ -71,13 +75,72 @@ fun TodayScreen(vm: DayViewModel) {
     val activeLog = if (selectedProfile == "Tkku") tkkuLog else shumuLog
     val ydayLog = if (selectedProfile == "Tkku") tkkuYday else shumuYday
 
-    // Calculate sleep duration using yesterday's sleep time if available, or today's sleep time
-    val lastNightSleepTime = ydayLog?.sleepTime?.ifBlank { activeLog.sleepTime } ?: activeLog.sleepTime
-    val calculatedSleepDuration = calculateSleepHours(lastNightSleepTime, activeLog.wakeupTime)
+    // FIXED SLEEP LOGIC: Only calculate if yesterday actually has a sleep time logged!
+    val actualLastNightSleep = ydayLog?.sleepTime ?: ""
+    val calculatedSleepDuration = if (actualLastNightSleep.isNotBlank() && activeLog.wakeupTime.isNotBlank()) {
+        calculateSleepHours(actualLastNightSleep, activeLog.wakeupTime)
+    } else {
+        null
+    }
+
+    // Auto sync screen time for the profile belonging to this phone
+    var hasUsagePermission by remember { mutableStateOf(ScreenTimeHelper.hasUsagePermission(ctx)) }
+    LaunchedEffect(myDeviceProfile, hasUsagePermission) {
+        val prof = myDeviceProfile
+        if (prof != null && hasUsagePermission) {
+            // 1. Sync Today's Screen Time
+            val todayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, 0)
+            val formattedToday = ScreenTimeHelper.formatMillis(todayMillis)
+            vm.syncScreenTime(prof, formattedToday)
+
+            // 2. Auto backfill yesterday's final screen time if missing
+            val ydayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, -1)
+            val formattedYday = ScreenTimeHelper.formatMillis(ydayMillis)
+            vm.backfillYesterdayScreenTime(prof, formattedYday)
+        }
+    }
 
     var editingMealType by remember { mutableStateOf<String?>(null) }
     var editingMealValue by remember { mutableStateOf("") }
-    val ctx = LocalContext.current
+
+    // FIRST-TIME SETUP: "Who is using this phone?"
+    if (myDeviceProfile == null) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color(0xFF0D0D12)).padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            ModernCard {
+                Text("Welcome to HealthWish 💜", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Ye phone kiska hai? Select karo taaki auto screen time aur data sahi profile me sync ho sake:", color = TextMuted, fontSize = 14.sp)
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = {
+                        PreferenceHelper.setMyProfile(ctx, "Tkku")
+                        myDeviceProfile = "Tkku"
+                        selectedProfile = "Tkku"
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPink)
+                ) {
+                    Text("🌸 Main Tkku hoon", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Button(
+                    onClick = {
+                        PreferenceHelper.setMyProfile(ctx, "Shumu")
+                        myDeviceProfile = "Shumu"
+                        selectedProfile = "Shumu"
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPurple)
+                ) {
+                    Text("💙 Main Shumu hoon", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            }
+        }
+        return
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -98,7 +161,11 @@ fun TodayScreen(vm: DayViewModel) {
                         activeContentColor = Color.White
                     )
                 ) {
-                    Text("🌸 Tkku", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(
+                        if (myDeviceProfile == "Tkku") "🌸 Tkku (Me)" else "🌸 Tkku",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 }
                 SegmentedButton(
                     selected = selectedProfile == "Shumu",
@@ -109,12 +176,16 @@ fun TodayScreen(vm: DayViewModel) {
                         activeContentColor = Color.White
                     )
                 ) {
-                    Text("💙 Shumu", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(
+                        if (myDeviceProfile == "Shumu") "💙 Shumu (Me)" else "💙 Shumu",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
                 }
             }
         }
 
-        // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality (With live calculated sleep hours!)
+        // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality
         item {
             SectionHeader(
                 title = "1. Sleep & Wake-up 😴",
@@ -160,7 +231,7 @@ fun TodayScreen(vm: DayViewModel) {
                     }
                 }
 
-                // Header with calculated sleep hours directly displayed!
+                // Neend kaisi thi + SLEPT HOURS (Only shown if last night recorded)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -212,7 +283,54 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 3. SYSTEMATIC STEP 2: Morning Walk, Exercise & Rituals
+        // 3. AUTO SCREEN ON TIME CARD
+        item {
+            SectionHeader(
+                title = "📱 Screen On Time",
+                subtitle = "Automatic daily phone usage tracking"
+            )
+            ModernCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF262638)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.Smartphone, null, tint = AccentPurple)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("$selectedProfile's Screen Time", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                            Text(
+                                if (activeLog.screenOnTime.isNotBlank()) activeLog.screenOnTime else "Syncing...",
+                                fontWeight = FontWeight.Bold,
+                                color = AccentPurple,
+                                fontSize = 18.sp
+                            )
+                        }
+                    }
+
+                    if (selectedProfile == myDeviceProfile && !hasUsagePermission) {
+                        Button(
+                            onClick = {
+                                ScreenTimeHelper.openUsageSettings(ctx)
+                                hasUsagePermission = true
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentPink)
+                        ) {
+                            Text("Enable Access", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. SYSTEMATIC STEP 2: Morning Walk, Exercise & Rituals
         item {
             val tasks = activeLog.tasks
             val completedCount = tasks.count { it.done }
@@ -307,7 +425,7 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 4. SYSTEMATIC STEP 3: Breakfast, Lunch, Dinner & Snacks
+        // 5. SYSTEMATIC STEP 3: Breakfast, Lunch, Dinner & Snacks
         item {
             SectionHeader(
                 title = "3. Food & Diet Log 🍱",
@@ -357,7 +475,7 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 5. Water Tracker
+        // 6. Water Tracker
         item {
             WaterTrackerRow(
                 glasses = activeLog.waterGlasses,
@@ -366,7 +484,7 @@ fun TodayScreen(vm: DayViewModel) {
             )
         }
 
-        // 6. SYSTEMATIC STEP 4: Night Day Completion & Mood (Sabse aakhir me)
+        // 7. SYSTEMATIC STEP 4: Night Day Completion & Mood (Sabse aakhir me)
         item {
             var noteText by remember(activeLog.dayNote) { mutableStateOf(activeLog.dayNote) }
             SectionHeader(

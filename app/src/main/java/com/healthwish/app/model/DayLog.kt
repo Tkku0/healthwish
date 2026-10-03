@@ -31,6 +31,7 @@ data class DayLog(
     val sleepMood: String = "",  // emoji code: awesome/good/ok/tired/bad
     val dayMood: String = "",    // emoji code: loved/happy/ok/sad/stress
     val dayNote: String = "",
+    val screenOnTime: String = "", // e.g., "5h 20m"
     val tasks: List<HabitTask> = defaultTasks(),
     val updatedAt: Timestamp? = null
 ) {

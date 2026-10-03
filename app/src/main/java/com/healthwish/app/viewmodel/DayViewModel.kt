@@ -85,4 +85,19 @@ class DayViewModel : ViewModel() {
     fun setWater(profile: String, n: Int) = updateProfile(profile) { l ->
         l.copy(waterGlasses = n)
     }
+
+    fun syncScreenTime(profile: String, screenTimeFormatted: String) = updateProfile(profile) { l ->
+        l.copy(screenOnTime = screenTimeFormatted)
+    }
+
+    // Auto checks and backfills yesterday's final screen time if missing
+    fun backfillYesterdayScreenTime(profile: String, yesterdayScreenTimeFormatted: String) {
+        viewModelScope.launch {
+            val yday = DayRepository.yesterdayKey()
+            val existing = DayRepository.loadDay(profile, yday)
+            if (existing != null && existing.screenOnTime.isBlank() && yesterdayScreenTimeFormatted.isNotBlank()) {
+                DayRepository.saveDay(existing.copy(screenOnTime = yesterdayScreenTimeFormatted), profile)
+            }
+        }
+    }
 }
