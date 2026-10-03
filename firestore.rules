@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // Only 2 UIDs allowed - replace with your real UIDs after first login
+    function isCouple(coupleId) {
+      return request.auth != null &&
+        request.auth.uid in get(/databases/$(db)/documents/couples/$(coupleId)).data.members;
+    }
+    match /couples/{coupleId} {
+      allow read, write: if request.auth != null && request.auth.uid in resource.data.members;
+      match /days/{doc} {
+        allow read, write: if isCouple(coupleId);
+      }
+      match /backups/{doc} {
+        allow read, write: if isCouple(coupleId);
+      }
+    }
+  }
+}

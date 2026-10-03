@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "160938642203",
+    "project_id": "healthwish-6ca22",
+    "storage_bucket": "healthwish-6ca22.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:160938642203:android:5a86c6af6cdf0a3ffb61be",
+        "android_client_info": {
+          "package_name": "com.healthwish.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCoi_9edMNxWd__lBHb0Kj2sPHOXDaHOiI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
