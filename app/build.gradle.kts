@@ -24,7 +24,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
-            applicationIdSuffix = ".debug"
+            // no suffix for personal use - keeps google-services.json matching
         }
     }
     buildFeatures { compose = true }
