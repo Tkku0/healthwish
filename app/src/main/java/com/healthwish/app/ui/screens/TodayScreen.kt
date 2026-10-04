@@ -1,7 +1,6 @@
 package com.healthwish.app.ui.screens
 
 import android.app.TimePickerDialog
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -26,7 +25,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
-import com.healthwish.app.model.ScoreHelper
 import com.healthwish.app.ui.components.*
 import com.healthwish.app.utils.PreferenceHelper
 import com.healthwish.app.utils.ScreenTimeHelper
@@ -78,14 +76,10 @@ fun TodayScreen(vm: DayViewModel) {
     val activeLog = if (selectedProfile == "Tkku") tkkuLog else shumuLog
     val ydayLog = if (selectedProfile == "Tkku") tkkuYday else shumuYday
 
-    // Month data → weekly summary + last weight lookup (bounded query, cheap)
+    // Month data → last weight lookup (bounded query, cheap)
     val monthTkku by vm.monthTkku.collectAsState()
     val monthShumu by vm.monthShumu.collectAsState()
-    val weekStart = remember { DayRepository.weekStartKey() }
     val activeMonth = if (selectedProfile == "Tkku") monthTkku else monthShumu
-    val weekly = remember(activeMonth, weekStart) {
-        ScoreHelper.weekly(activeMonth.filter { it.dateKey >= weekStart })
-    }
     // Sabse recent logged weight (aaj ya pichhle dino se)
     val lastWeight = remember(activeMonth, activeLog) {
         (activeMonth + activeLog).filter { it.weightKg > 0 }.maxByOrNull { it.dateKey }
@@ -203,88 +197,6 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 1b. Slim weight row (15 din me ek baar update kaafi)
-        item(key = "weight_row") {
-            var showWeightDlg by remember { mutableStateOf(false) }
-            ModernCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("⚖️", fontSize = 22.sp)
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Weight", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text(
-                            if (lastWeight != null) {
-                                "${"%.1f".format(lastWeight.weightKg)} kg • ${lastWeight.dateKey}"
-                            } else {
-                                "Not logged yet"
-                            },
-                            color = TextMuted,
-                            fontSize = 12.sp
-                        )
-                    }
-                    TextButton(onClick = { showWeightDlg = true }) {
-                        Text(
-                            if (lastWeight != null) "Update" else "Add",
-                            fontWeight = FontWeight.Bold,
-                            color = AccentGreen
-                        )
-                    }
-                }
-                Text(
-                    "15 din me ek baar update kaafi hai 🙂",
-                    color = TextMuted,
-                    fontSize = 11.sp
-                )
-            }
-            if (showWeightDlg) {
-                var weightInput by remember(lastWeight?.weightKg) {
-                    mutableStateOf(
-                        if ((lastWeight?.weightKg ?: 0f) > 0) "%.1f".format(lastWeight!!.weightKg) else ""
-                    )
-                }
-                AlertDialog(
-                    onDismissRequest = { showWeightDlg = false },
-                    title = { Text("Weight update karo ⚖️", fontWeight = FontWeight.Bold) },
-                    text = {
-                        OutlinedTextField(
-                            value = weightInput,
-                            onValueChange = { weightInput = it.filter { c -> c.isDigit() || c == '.' } },
-                            label = { Text("Weight in kg (e.g. 62.5)") },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            singleLine = true,
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
-                            )
-                        )
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                val kg = weightInput.toFloatOrNull()
-                                if (kg != null && kg in 20f..300f) {
-                                    vm.setWeight(selectedProfile, kg)
-                                    showWeightDlg = false
-                                    Toast.makeText(ctx, "Weight saved: ${"%.1f".format(kg)} kg 💜", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(ctx, "Sahi weight likho (20-300 kg)", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-                        ) {
-                            Text("Save", color = Color(0xFF101018), fontWeight = FontWeight.Bold)
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showWeightDlg = false }) { Text("Cancel") }
-                    },
-                    containerColor = Color(0xFF161622)
-                )
-            }
-        }
 
         // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality
         item(key = "sleep_card") {
@@ -353,6 +265,13 @@ fun TodayScreen(vm: DayViewModel) {
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
+                    } else {
+                        Text(
+                            if (actualLastNightSleep.isBlank()) "Kal raat ka sleep time log karo ⏳"
+                            else "Aaj ka wake-up time dalo ⏳",
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
                     }
                 }
 
@@ -587,6 +506,89 @@ fun TodayScreen(vm: DayViewModel) {
             )
         }
 
+        // 6b. Weight (15 din me ek baar update kaafi)
+        item(key = "weight_row") {
+            var showWeightDlg by remember { mutableStateOf(false) }
+            ModernCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⚖️", fontSize = 22.sp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Weight", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(
+                            if (lastWeight != null) {
+                                "${"%.1f".format(lastWeight.weightKg)} kg • ${lastWeight.dateKey}"
+                            } else {
+                                "Not logged yet"
+                            },
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                    TextButton(onClick = { showWeightDlg = true }) {
+                        Text(
+                            if (lastWeight != null) "Update" else "Add",
+                            fontWeight = FontWeight.Bold,
+                            color = AccentGreen
+                        )
+                    }
+                }
+                Text(
+                    "15 din me ek baar update kaafi hai 🙂",
+                    color = TextMuted,
+                    fontSize = 11.sp
+                )
+            }
+            if (showWeightDlg) {
+                var weightInput by remember(lastWeight?.weightKg) {
+                    mutableStateOf(
+                        if ((lastWeight?.weightKg ?: 0f) > 0) "%.1f".format(lastWeight!!.weightKg) else ""
+                    )
+                }
+                AlertDialog(
+                    onDismissRequest = { showWeightDlg = false },
+                    title = { Text("Weight update karo ⚖️", fontWeight = FontWeight.Bold) },
+                    text = {
+                        OutlinedTextField(
+                            value = weightInput,
+                            onValueChange = { weightInput = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = { Text("Weight in kg (e.g. 62.5)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                            )
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val kg = weightInput.toFloatOrNull()
+                                if (kg != null && kg in 20f..300f) {
+                                    vm.setWeight(selectedProfile, kg)
+                                    showWeightDlg = false
+                                    Toast.makeText(ctx, "Weight saved: ${"%.1f".format(kg)} kg 💜", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(ctx, "Sahi weight likho (20-300 kg)", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                        ) {
+                            Text("Save", color = Color(0xFF101018), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showWeightDlg = false }) { Text("Cancel") }
+                    },
+                    containerColor = Color(0xFF161622)
+                )
+            }
+        }
+
         // 7. SYSTEMATIC STEP 4: Night Day Completion & Mood (Sabse aakhir me)
         item(key = "reflection_card") {
             var noteText by remember(activeLog.dayNote) { mutableStateOf(activeLog.dayNote) }
@@ -641,23 +643,6 @@ fun TodayScreen(vm: DayViewModel) {
                 }
             }
         }
-
-        // 8. Weekly summary + share
-        item(key = "weekly_card") {
-            WeeklyCard(
-                profile = selectedProfile,
-                weekly = weekly,
-                onShare = {
-                    val text = ScoreHelper.shareText(selectedProfile, weekly)
-                    ctx.startActivity(
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, text)
-                        }.let { Intent.createChooser(it, "Share weekly summary 💜") }
-                    )
-                }
-            )
-        }
     }
 
     // Modal Sheet for adding/editing meals
@@ -697,50 +682,5 @@ fun TodayScreen(vm: DayViewModel) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun WeeklyCard(
-    profile: String,
-    weekly: ScoreHelper.WeeklySummary,
-    onShare: () -> Unit
-) {
-    SectionHeader(
-        title = "This Week 📊",
-        subtitle = "$profile ka 7-day summary"
-    )
-    ModernCard {
-        if (weekly.daysLogged == 0) {
-            Text("Is hafte abhi kuch log nahi hua — aaj se shuru karo 💜", color = TextMuted, fontSize = 13.sp)
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                WeeklyStat("${weekly.daysLogged}/7", "days")
-                WeeklyStat("${weekly.avgScore}", "avg score")
-                WeeklyStat("%.1f".format(weekly.avgWater), "water/day")
-                WeeklyStat("${weekly.tasksDone}/${weekly.tasksTotal}", "tasks")
-            }
-            Text("Best day: ${weekly.bestDay} ⭐", color = Color(0xFFFFD6A5), fontSize = 13.sp)
-            OutlinedButton(
-                onClick = onShare,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Rounded.Share, null, tint = AccentPink)
-                Spacer(Modifier.width(6.dp))
-                Text("Share with each other 💜")
-            }
-        }
-    }
-}
-
-@Composable
-private fun WeeklyStat(value: String, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-        Text(label, color = TextMuted, fontSize = 11.sp)
     }
 }

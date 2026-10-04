@@ -193,12 +193,4 @@ object DayRepository {
             todayKey()
         }
     }
-
-    fun weekStartKey(): String {
-        return try {
-            java.time.LocalDate.now().minusDays(6).toString()
-        } catch (e: Exception) {
-            todayKey()
-        }
-    }
 }

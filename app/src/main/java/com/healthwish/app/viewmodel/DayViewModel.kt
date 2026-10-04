@@ -26,7 +26,7 @@ class DayViewModel : ViewModel() {
     val tkkuYesterday: StateFlow<DayLog?> = _tkkuYesterday.asStateFlow()
     val shumuYesterday: StateFlow<DayLog?> = _shumuYesterday.asStateFlow()
 
-    // Month logs (bounded query): scoreboard, streak, weekly summary, weight chart ke liye
+    // Month logs (bounded query): last weight lookup ke liye
     private val _monthTkku = MutableStateFlow<List<DayLog>>(emptyList())
     private val _monthShumu = MutableStateFlow<List<DayLog>>(emptyList())
     val monthTkku: StateFlow<List<DayLog>> = _monthTkku.asStateFlow()
