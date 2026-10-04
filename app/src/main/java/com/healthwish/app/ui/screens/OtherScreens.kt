@@ -172,6 +172,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var isLockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(ctx)) }
+    var isFingerprintOn by remember { mutableStateOf(AppLockManager.isBiometricEnabled(ctx)) }
     var pinText by remember { mutableStateOf("") }
     var backupPass by remember { mutableStateOf("") }
     var exporting by remember { mutableStateOf(false) }
@@ -239,15 +240,42 @@ fun SettingsScreen(onLogout: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text("App Lock Active", fontWeight = FontWeight.Bold)
-                        Text("Require Fingerprint/PIN on launch", color = TextMuted, fontSize = 12.sp)
+                        Text("Require PIN on launch", color = TextMuted, fontSize = 12.sp)
                     }
                     Switch(
                         checked = isLockEnabled,
                         onCheckedChange = {
                             isLockEnabled = it
                             AppLockManager.setEnabled(ctx, it)
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Fingerprint Unlock", fontWeight = FontWeight.Bold)
+                        Text(
+                            if (AppLockManager.canUseBiometric(ctx)) "Ask fingerprint on launch"
+                            else "Not available on this device",
+                            color = TextMuted, fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = isFingerprintOn,
+                        enabled = AppLockManager.canUseBiometric(ctx),
+                        onCheckedChange = {
+                            isFingerprintOn = it
+                            AppLockManager.setBiometricEnabled(ctx, it)
+                            Toast.makeText(
+                                ctx,
+                                if (it) "Fingerprint ON" else "Fingerprint OFF — only PIN",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     )
                 }

@@ -12,6 +12,7 @@ object AppLockManager {
     private const val PREF = "healthwish_lock"
     private const val KEY_PIN = "pin"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_BIOMETRIC = "biometric_enabled"
 
     private fun prefs(ctx: Context) = EncryptedSharedPreferences.create(
         ctx, PREF,
@@ -22,6 +23,8 @@ object AppLockManager {
 
     fun isEnabled(ctx: Context) = prefs(ctx).getBoolean(KEY_ENABLED, false)
     fun setEnabled(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean(KEY_ENABLED, on).apply()
+    fun isBiometricEnabled(ctx: Context) = prefs(ctx).getBoolean(KEY_BIOMETRIC, true)
+    fun setBiometricEnabled(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean(KEY_BIOMETRIC, on).apply()
     fun savePin(ctx: Context, pin: String) {
         prefs(ctx).edit().putString(KEY_PIN, pin).putBoolean(KEY_ENABLED, true).apply()
     }

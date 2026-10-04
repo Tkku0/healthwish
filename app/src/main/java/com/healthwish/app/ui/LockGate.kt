@@ -17,8 +17,9 @@ fun LockGate(activity: FragmentActivity, unlocked: Boolean, onUnlocked: () -> Un
     if (!AppLockManager.isEnabled(ctx) || unlocked) { content(); return }
     var pin by remember { mutableStateOf("") }
     var err by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        if (AppLockManager.canUseBiometric(ctx)) {
+    val biometricAllowed = AppLockManager.isBiometricEnabled(ctx)
+    LaunchedEffect(biometricAllowed) {
+        if (biometricAllowed && AppLockManager.canUseBiometric(ctx)) {
             AppLockManager.promptBiometric(activity, onOk = onUnlocked, onFail = { err = it })
         }
     }
