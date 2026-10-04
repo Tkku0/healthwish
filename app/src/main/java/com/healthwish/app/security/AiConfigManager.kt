@@ -25,22 +25,31 @@ object AiConfigManager {
     private const val BUILTIN_MODEL = "openai/gpt-oss-120b"
     private const val BUILTIN_KEY = "***REVOKED***"
 
-    // Default nutrition rules (user-tuned prompt) — Settings > AI Prompt se edit ho sakta hai.
-    // IMPORTANT: output hamesha sirf JSON hona chahiye taaki app auto-fill kar sake.
+    // Purana default (portion-table era) — jinhone ise edit nahi kiya unhe naya default milega
+    private const val LEGACY_DEFAULT_V1 =
+        "Use these standard home-style portions (average oil): " +
+            "1 roti (30g atta)=100; 1 katori cooked dal (150g)=150; 1 katori cooked rice (150g)=200; " +
+            "1 katori sabzi=130; 1 tsp oil/ghee=45; 1 glass milk (250ml)=150; 1 boiled egg=70; " +
+            "100g chicken curry=180; 100g paneer curry=250; 1 samosa=250; 1 cup chai (milk+sugar)=70; " +
+            "1 banana=105; 1 apple=95; 100g curd=65; 1 thali (2 roti+dal+rice+sabzi)=550. " +
+            "If quantity unclear, assume 1 standard serving. Always reply an integer."
+
+    // Default nutrition rules (IFCT-grounded, user-approved) — Settings > AI Prompt se edit ho sakta hai.
+    // IMPORTANT: output hamesha sirf JSON hona chahiye taaki app auto-fill kar sake
+    // (range/total/correction app khud handle karti hai, isliye prompt me single integer manga hai).
     const val DEFAULT_RULES =
-        "You are an Indian Food & Nutrition Logging AI. Interpret every food the Indian way " +
-            "(roti/paratha/rice/dal/rajma/chole/sabzi/aloo/paneer/curd/poha/upma/idli/dosa/sambar/chutney/samosa/pakora/biryani/pulao/chicken curry/egg curry/chai/milk/lassi/fruits/dry fruits/mithai). " +
-            "Understand quantities: roti count, katori (a small Indian bowl, ~150-180ml — never a Western cup), bowl, plate, glass, cup, spoon, handful, piece, thali. " +
-            "Account for Indian cooking: oil/ghee/butter/cream/sugar/tadka/gravy/frying — e.g. aloo sabzi is NOT plain boiled potato. " +
-            "Assume a medium homemade wheat roti unless stated (never restaurant naan). " +
-            "For biryani/thali/restaurant food estimate the complete serving incl. rice, oil/ghee and gravy; scale up if unusually large. " +
-            "Split dry fruits by type (almond/cashew/walnut/raisin/pista/dates) — missing qty means one Indian handful. " +
-            "Split mixed meals into components and total them (e.g. 3 roti + 1 katori aloo sabzi; biryani rice part + chicken pieces separately). " +
-            "Calories are estimates, never exact. Don't ask questions unless missing info changes the result a lot. " +
-            "Understand Hindi/Hinglish/English ('2 roti aur dal', 'ek katori aloo ki sabji', 'subah chai biscuit'). " +
-            "Keep a balanced, non-restrictive tone. " +
+        "You are an Indian Food Calorie Calculator. Estimate calories as accurately as possible " +
+            "using Indian food data, preferably ICMR-NIN Indian Food Composition Tables (IFCT 2017). " +
+            "Understand Hindi, Hinglish and English food entries. Always use realistic Indian portions, " +
+            "never Western serving sizes. Prefer grams/ml when provided. For roti, rice, dal, sabzi, biryani etc., " +
+            "calculate from realistic cooked/raw weight. Include cooking oil, ghee, butter, sugar and gravy when relevant. " +
+            "For mixed dishes break into ingredients/components, calculate separately, then total. " +
+            "For '1 katori', '1 plate', '1 bowl' estimate a realistic Indian portion. " +
+            "Never use random generic values when food can be calculated from ingredients/portion. " +
+            "Never claim false precision — give your best single integer estimate. " +
+            "Don't ask questions unless missing info changes the result a lot. Keep a balanced, non-restrictive tone. " +
             "CRITICAL OUTPUT RULE: your entire reply must be ONLY the single JSON object asked for in the system message — " +
-            "no headings, no emojis, no ranges, no extra text. The app parses it automatically."
+            "no headings, no emojis, no ranges, no extra text. The app parses it automatically and maintains daily totals itself."
 
     // Gemini ka OpenAI-compatible endpoint — AI Studio key seedha chalti hai
     val PRESETS: Map<String, Pair<String, String>> = linkedMapOf(
@@ -92,10 +101,16 @@ object AiConfigManager {
         prefs(ctx).edit().clear().apply()
     }
 
-    // Custom nutrition prompt (khali = default rules). Dono flows (manual + AI box) me judta hai.
+    // Custom nutrition prompt (khali ya purana-default = naya default). Dono flows (manual + AI box) me judta hai.
+    private fun isDefaultText(saved: String?): Boolean {
+        if (saved.isNullOrBlank()) return true
+        if (saved == LEGACY_DEFAULT_V1) return true
+        return saved.startsWith("You are an Indian Food & Nutrition Logging AI.")
+    }
+
     fun getPrompt(ctx: Context): String {
         val saved = prefs(ctx).getString(KEY_PROMPT, null)?.trim()
-        return if (saved.isNullOrBlank()) DEFAULT_RULES else saved
+        return if (isDefaultText(saved)) DEFAULT_RULES else saved!!
     }
 
     fun savePrompt(ctx: Context, text: String) {
@@ -107,7 +122,7 @@ object AiConfigManager {
     }
 
     fun isPromptCustomized(ctx: Context): Boolean {
-        return !(prefs(ctx).getString(KEY_PROMPT, null)?.trim().isNullOrBlank())
+        return !isDefaultText(prefs(ctx).getString(KEY_PROMPT, null)?.trim())
     }
 
     fun isConfigured(ctx: Context): Boolean {
