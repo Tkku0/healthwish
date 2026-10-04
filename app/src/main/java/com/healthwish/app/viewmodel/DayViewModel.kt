@@ -24,14 +24,20 @@ class DayViewModel : ViewModel() {
     val tkkuYesterday: StateFlow<DayLog?> = _tkkuYesterday.asStateFlow()
     val shumuYesterday: StateFlow<DayLog?> = _shumuYesterday.asStateFlow()
 
+    // Server se initial load ho gaya ya nahi — isse pehle full-doc save karna unsafe hai
+    @Volatile private var tkkuReady = false
+    @Volatile private var shumuReady = false
+
     init {
         viewModelScope.launch {
             val yday = DayRepository.yesterdayKey()
             // Load initial
             val initialTkku = DayRepository.loadDay("Tkku", today)
             if (initialTkku != null) _tkkuLog.value = initialTkku
+            tkkuReady = true
             val initialShumu = DayRepository.loadDay("Shumu", today)
             if (initialShumu != null) _shumuLog.value = initialShumu
+            shumuReady = true
             DayRepository.loadDay("Tkku", yday)?.let { _tkkuYesterday.value = it }
             DayRepository.loadDay("Shumu", yday)?.let { _shumuYesterday.value = it }
 
@@ -92,21 +98,49 @@ class DayViewModel : ViewModel() {
         l.copy(waterGlasses = n)
     }
 
+    // SAFE SOT sync: kabhi full-doc save nahi karta, sirf screenOnTime field merge karta hai.
+    // Pehle server se fresh doc load karta hai taaki khaali local state diet ko wipe na kare.
     fun syncScreenTime(profile: String, screenTimeFormatted: String) {
         if (screenTimeFormatted.isBlank()) return
-        val currentLog = if (profile.equals("Tkku", ignoreCase = true)) _tkkuLog.value else _shumuLog.value
-        if (currentLog.screenOnTime != screenTimeFormatted) {
-            updateProfile(profile) { l -> l.copy(screenOnTime = screenTimeFormatted) }
+        viewModelScope.launch {
+            try {
+                val fresh = DayRepository.loadDay(profile, today)
+                val isTkku = profile.equals("Tkku", ignoreCase = true)
+                val base = fresh ?: if (isTkku) _tkkuLog.value else _shumuLog.value
+                // Agar server/local dono me same SOT hai to write skip — har launch par Firestore write nahi
+                if (fresh != null && fresh.screenOnTime == screenTimeFormatted) {
+                    if (isTkku) { _tkkuLog.value = fresh.copy(ownerName = "Tkku", dateKey = today) }
+                    else { _shumuLog.value = fresh.copy(ownerName = "Shumu", dateKey = today) }
+                    return@launch
+                }
+                if (fresh == null && base.screenOnTime == screenTimeFormatted) return@launch
+                DayRepository.updateScreenTimeField(profile, today, screenTimeFormatted)
+                // Local UI turant update, lekin sirf SOT field — baaki sab freshest source se
+                if (isTkku) {
+                    _tkkuLog.value = base.copy(ownerName = "Tkku", dateKey = today, screenOnTime = screenTimeFormatted)
+                    tkkuReady = true
+                } else {
+                    _shumuLog.value = base.copy(ownerName = "Shumu", dateKey = today, screenOnTime = screenTimeFormatted)
+                    shumuReady = true
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
-    // Auto checks and backfills yesterday's final screen time if missing
+    // Auto checks and backfills yesterday's final screen time if missing (single-field merge only)
     fun backfillYesterdayScreenTime(profile: String, yesterdayScreenTimeFormatted: String) {
         viewModelScope.launch {
-            val yday = DayRepository.yesterdayKey()
-            val existing = DayRepository.loadDay(profile, yday)
-            if (existing != null && existing.screenOnTime.isBlank() && yesterdayScreenTimeFormatted.isNotBlank()) {
-                DayRepository.saveDay(existing.copy(screenOnTime = yesterdayScreenTimeFormatted), profile)
+            try {
+                if (yesterdayScreenTimeFormatted.isBlank()) return@launch
+                val yday = DayRepository.yesterdayKey()
+                val existing = DayRepository.loadDay(profile, yday)
+                if (existing != null && existing.screenOnTime.isBlank()) {
+                    DayRepository.updateScreenTimeField(profile, yday, yesterdayScreenTimeFormatted)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }

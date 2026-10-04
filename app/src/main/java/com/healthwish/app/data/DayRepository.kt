@@ -38,6 +38,27 @@ object DayRepository {
         }
     }
 
+    // SAFE: only touches screenOnTime (+ identity fields). Diet fields ko kabhi overwrite nahi karta.
+    // Full-doc set() se hota tha data wipe jab local state khaali hota tha — isliye SOT ke liye hamesha ye use karo.
+    suspend fun updateScreenTimeField(profile: String, dateKey: String, screenTime: String) {
+        if (screenTime.isBlank()) return
+        val targetId = docId(dateKey, profile)
+        try {
+            val patch = mapOf(
+                "screenOnTime" to screenTime,
+                "id" to targetId,
+                "ownerName" to profile,
+                "coupleId" to COUPLE_ID,
+                "dateKey" to dateKey
+            )
+            db.collection("couples").document(COUPLE_ID)
+                .collection("days").document(targetId)
+                .set(patch, SetOptions.merge())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     // Real-time: Live listener on fixed profile (Tkku / Shumu)
     fun listenDay(profile: String, dateKey: String = todayKey(), onChange: (DayLog?) -> Unit): ListenerRegistration {
         return db.collection("couples").document(COUPLE_ID)
