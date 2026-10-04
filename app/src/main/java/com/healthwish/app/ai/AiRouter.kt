@@ -94,7 +94,7 @@ object AiRouter {
                         "Estimate total kcal as an integer. " + rules,
                     input
                 )
-                AiClient.parseJsonResult(out, input)
+                Pair(AiClient.parseJsonResult(out, input), null)
             } else {
                 AiClient.parseFoodInput(keyCfg(ctx), input, rules)
             }
