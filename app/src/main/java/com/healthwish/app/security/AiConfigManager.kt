@@ -32,10 +32,10 @@ object AiConfigManager {
     val PRESETS: Map<String, Pair<String, String>> = linkedMapOf(
         "Gemini (Google AI Studio)" to Pair(
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            "gemini-2.0-flash"
+            "gemini-2.5-flash"
         ),
         "OpenAI" to Pair("https://api.openai.com/v1", "gpt-4o-mini"),
-        "Groq" to Pair("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+        "Groq" to Pair("https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
         "OpenRouter" to Pair("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct"),
         "DeepSeek" to Pair("https://api.deepseek.com/v1", "deepseek-chat"),
         "Custom" to Pair("", "")
