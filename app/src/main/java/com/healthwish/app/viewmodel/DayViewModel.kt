@@ -143,15 +143,14 @@ class DayViewModel : ViewModel() {
 
     // Manual entry ke baad AI auto-calorie: sirf tab jab text abhi bhi wahi hai (stale overwrite nahi).
     // Fail ho to chup nahi — chhota reason toast me (sirf jab AI setup hai).
-    // Backend: API key ya Google login (Settings > AI Backend) — dono yahi se route hote hain.
     fun estimateKcal(ctx: android.content.Context, profile: String, type: String, text: String) {
         val appCtx = ctx.applicationContext
         viewModelScope.launch {
             try {
-                if (!com.healthwish.app.ai.AiRouter.isReady(appCtx)) return@launch
+                if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) return@launch
                 if (text.isBlank()) return@launch
-                val (kcal, err) = com.healthwish.app.ai.AiRouter.estimateCalories(
-                    appCtx, text,
+                val (kcal, err) = com.healthwish.app.ai.AiClient.estimateCalories(
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), text,
                     com.healthwish.app.security.AiConfigManager.getPrompt(appCtx)
                 )
                 if (kcal == null) {
@@ -185,12 +184,12 @@ class DayViewModel : ViewModel() {
         val appCtx = ctx.applicationContext
         viewModelScope.launch {
             try {
-                if (!com.healthwish.app.ai.AiRouter.isReady(appCtx)) {
-                    onResult(null, "Settings > AI me setup karo (Key ya Google Login) 🔑")
+                if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) {
+                    onResult(null, "Settings > AI Setup me key dalo 🔑")
                     return@launch
                 }
-                val (res, err) = com.healthwish.app.ai.AiRouter.parseFoodInput(
-                    appCtx, input,
+                val (res, err) = com.healthwish.app.ai.AiClient.parseFoodInput(
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), input,
                     com.healthwish.app.security.AiConfigManager.getPrompt(appCtx)
                 )
                 onResult(res, err)
