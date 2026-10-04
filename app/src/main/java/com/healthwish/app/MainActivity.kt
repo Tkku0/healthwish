@@ -17,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel as vmCompose
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.healthwish.app.data.DayRepository.init(applicationContext)
         enableEdgeToEdge()
         setContent {
             HealthWishTheme {
