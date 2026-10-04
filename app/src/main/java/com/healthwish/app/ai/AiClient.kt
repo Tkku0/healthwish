@@ -40,9 +40,9 @@ object AiClient {
                 setRequestProperty("Authorization", "Bearer ${cfg.apiKey}")
             }
             try {
-                outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-                val code = responseCode
-                val stream = if (code in 200..299) inputStream else errorStream
+                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
                 val raw = stream.bufferedReader().use { it.readText() }
                 if (code !in 200..299) {
                     val msg = try {
