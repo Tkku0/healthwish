@@ -123,10 +123,71 @@ class DayViewModel : ViewModel() {
 
     fun setMeal(profile: String, type: String, text: String) = updateProfile(profile) { l ->
         when (type) {
-            "breakfast" -> l.copy(breakfast = text)
-            "lunch" -> l.copy(lunch = text)
-            "dinner" -> l.copy(dinner = text)
-            else -> l.copy(snacks = text)
+            "breakfast" -> if (l.breakfast != text) l.copy(breakfast = text, breakfastKcal = 0) else l
+            "lunch" -> if (l.lunch != text) l.copy(lunch = text, lunchKcal = 0) else l
+            "dinner" -> if (l.dinner != text) l.copy(dinner = text, dinnerKcal = 0) else l
+            else -> if (l.snacks != text) l.copy(snacks = text, snacksKcal = 0) else l
+        }
+    }
+
+    fun setMealWithKcal(profile: String, type: String, text: String, kcal: Int) =
+        updateProfile(profile) { l ->
+            val k = kcal.coerceAtLeast(0)
+            when (type) {
+                "breakfast" -> l.copy(breakfast = text, breakfastKcal = k)
+                "lunch" -> l.copy(lunch = text, lunchKcal = k)
+                "dinner" -> l.copy(dinner = text, dinnerKcal = k)
+                else -> l.copy(snacks = text, snacksKcal = k)
+            }
+        }
+
+    // Manual entry ke baad AI auto-calorie: sirf tab jab text abhi bhi wahi hai (stale overwrite nahi)
+    fun estimateKcal(ctx: android.content.Context, profile: String, type: String, text: String) {
+        val appCtx = ctx.applicationContext
+        viewModelScope.launch {
+            try {
+                val cfg = com.healthwish.app.security.AiConfigManager.get(appCtx)
+                if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) return@launch
+                if (text.isBlank()) return@launch
+                val kcal = com.healthwish.app.ai.AiClient.estimateCalories(cfg, text) ?: return@launch
+                val isTkku = profile.equals("Tkku", ignoreCase = true)
+                val current = if (isTkku) _tkkuLog.value else _shumuLog.value
+                val curText = when (type) {
+                    "breakfast" -> current.breakfast
+                    "lunch" -> current.lunch
+                    "dinner" -> current.dinner
+                    else -> current.snacks
+                }
+                if (curText != text) return@launch // user ne beech me badal diya — purana estimate discard
+                setMealWithKcal(profile, type, text, kcal)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // AI free-text entry: callback me parsed result (null = AI fail/off)
+    fun parseFoodInput(
+        ctx: android.content.Context,
+        input: String,
+        onResult: (com.healthwish.app.ai.AiMealResult?) -> Unit
+    ) {
+        val appCtx = ctx.applicationContext
+        viewModelScope.launch {
+            try {
+                if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) {
+                    onResult(null)
+                    return@launch
+                }
+                onResult(
+                    com.healthwish.app.ai.AiClient.parseFoodInput(
+                        com.healthwish.app.security.AiConfigManager.get(appCtx), input
+                    )
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onResult(null)
+            }
         }
     }
 

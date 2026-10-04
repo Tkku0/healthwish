@@ -23,8 +23,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.healthwish.app.ai.AiMealResult
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
+import com.healthwish.app.security.AiConfigManager
 import com.healthwish.app.ui.components.*
 import com.healthwish.app.utils.PreferenceHelper
 import com.healthwish.app.utils.ScreenTimeHelper
@@ -114,6 +116,7 @@ fun TodayScreen(vm: DayViewModel) {
 
     var editingMealType by remember { mutableStateOf<String?>(null) }
     var editingMealValue by remember { mutableStateOf("") }
+    var editingMealKcal by remember { mutableStateOf("") }
 
     // FIRST-TIME SETUP: "Who is using this phone?"
     if (myDeviceProfile == null) {
@@ -447,21 +450,56 @@ fun TodayScreen(vm: DayViewModel) {
             }
         }
 
-        // 5. SYSTEMATIC STEP 3: Breakfast, Lunch, Dinner & Snacks
+        // 5. SYSTEMATIC STEP 3: Breakfast, Lunch, Dinner & Snacks (+ calories)
         item(key = "food_card") {
+            val totalKcal = activeLog.breakfastKcal + activeLog.lunchKcal +
+                activeLog.dinnerKcal + activeLog.snacksKcal
+            val kcalTarget = remember { PreferenceHelper.getCalorieTarget(ctx) }
+            val aiOn = remember { AiConfigManager.isConfigured(ctx) }
+            var showAiBox by remember { mutableStateOf(false) }
+            var aiInput by remember { mutableStateOf("") }
+            var aiBusy by remember { mutableStateOf(false) }
+            var aiPreview by remember { mutableStateOf<AiMealResult?>(null) }
+
             SectionHeader(
                 title = "3. Food & Diet Log 🍱",
                 subtitle = "Tap any plate to add or update"
             )
             ModernCard {
+                // Daily calorie total
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "🔥 $totalKcal / $kcalTarget kcal",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = if (totalKcal > kcalTarget) AccentPink else AccentGreen
+                    )
+                    Text(
+                        if (aiOn) "✨ AI on" else "AI off",
+                        color = TextMuted,
+                        fontSize = 12.sp
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = { (totalKcal / kcalTarget.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = if (totalKcal > kcalTarget) AccentPink else AccentGreen,
+                    trackColor = Color(0xFF262638)
+                )
                 MealItem(
                     emoji = "🌅",
                     title = "Breakfast",
                     value = activeLog.breakfast,
                     isEditable = true,
+                    kcal = activeLog.breakfastKcal,
                     onEdit = {
                         editingMealType = "breakfast"
                         editingMealValue = activeLog.breakfast
+                        editingMealKcal = if (activeLog.breakfastKcal > 0) activeLog.breakfastKcal.toString() else ""
                     }
                 )
                 MealItem(
@@ -469,9 +507,11 @@ fun TodayScreen(vm: DayViewModel) {
                     title = "Lunch",
                     value = activeLog.lunch,
                     isEditable = true,
+                    kcal = activeLog.lunchKcal,
                     onEdit = {
                         editingMealType = "lunch"
                         editingMealValue = activeLog.lunch
+                        editingMealKcal = if (activeLog.lunchKcal > 0) activeLog.lunchKcal.toString() else ""
                     }
                 )
                 MealItem(
@@ -479,9 +519,11 @@ fun TodayScreen(vm: DayViewModel) {
                     title = "Dinner",
                     value = activeLog.dinner,
                     isEditable = true,
+                    kcal = activeLog.dinnerKcal,
                     onEdit = {
                         editingMealType = "dinner"
                         editingMealValue = activeLog.dinner
+                        editingMealKcal = if (activeLog.dinnerKcal > 0) activeLog.dinnerKcal.toString() else ""
                     }
                 )
                 MealItem(
@@ -489,11 +531,115 @@ fun TodayScreen(vm: DayViewModel) {
                     title = "Snacks",
                     value = activeLog.snacks,
                     isEditable = true,
+                    kcal = activeLog.snacksKcal,
                     onEdit = {
                         editingMealType = "snacks"
                         editingMealValue = activeLog.snacks
+                        editingMealKcal = if (activeLog.snacksKcal > 0) activeLog.snacksKcal.toString() else ""
                     }
                 )
+
+                // AI free-text entry
+                if (!showAiBox) {
+                    OutlinedButton(
+                        onClick = { showAiBox = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Rounded.AutoAwesome, null, tint = AccentPink)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (aiOn) "✨ AI se likho (e.g. dopahar ko 2 roti dal)" else "✨ AI se likho (setup Settings me)")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = aiInput,
+                        onValueChange = { aiInput = it },
+                        label = { Text("Kya khaya, kab khaya?") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        minLines = 2
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                if (aiInput.isBlank()) {
+                                    Toast.makeText(ctx, "Pehle kuch likho 🙂", Toast.LENGTH_SHORT).show()
+                                } else if (!AiConfigManager.isConfigured(ctx)) {
+                                    Toast.makeText(ctx, "Settings > AI Setup me key dalo 🔑", Toast.LENGTH_LONG).show()
+                                } else {
+                                    aiBusy = true
+                                    aiPreview = null
+                                    vm.parseFoodInput(ctx, aiInput.trim()) { res ->
+                                        aiBusy = false
+                                        if (res == null) {
+                                            Toast.makeText(ctx, "AI samajh nahi paya / net check karo", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            aiPreview = res
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentPink),
+                            enabled = !aiBusy
+                        ) {
+                            Text(if (aiBusy) "Soch raha hai..." else "Analyze ✨", fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = { showAiBox = false; aiPreview = null }) {
+                            Icon(Icons.Default.Close, null)
+                        }
+                    }
+                    val preview = aiPreview
+                    if (preview != null) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = AccentGreen.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, AccentGreen.copy(alpha = 0.4f))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    "${preview.meal.replaceFirstChar { it.uppercase() }} → ${preview.text}",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    "🔥 ${preview.calories} kcal",
+                                    color = AccentGreen,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        onClick = {
+                                            vm.setMealWithKcal(selectedProfile, preview.meal, preview.text, preview.calories)
+                                            aiInput = ""
+                                            aiPreview = null
+                                            showAiBox = false
+                                            Toast.makeText(ctx, "Saved ✨", Toast.LENGTH_SHORT).show()
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                                    ) {
+                                        Text("Save", color = Color(0xFF101018), fontWeight = FontWeight.Bold)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { aiPreview = null },
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Text("Discard")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -668,10 +814,30 @@ fun TodayScreen(vm: DayViewModel) {
                     shape = RoundedCornerShape(14.dp),
                     minLines = 3
                 )
+                OutlinedTextField(
+                    value = editingMealKcal,
+                    onValueChange = { editingMealKcal = it.filter(Char::isDigit).take(5) },
+                    label = { Text("Calories (kcal) — khaali = ✨ AI bharega") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    )
+                )
                 Button(
                     onClick = {
-                        vm.setMeal(selectedProfile, type, editingMealValue.trim())
+                        val text = editingMealValue.trim()
+                        val kcal = editingMealKcal.toIntOrNull() ?: 0
+                        if (kcal > 0) {
+                            vm.setMealWithKcal(selectedProfile, type, text, kcal)
+                        } else {
+                            vm.setMeal(selectedProfile, type, text)
+                            // Manual entry par AI auto-calorie (agar AI setup hai)
+                            vm.estimateKcal(ctx, selectedProfile, type, text)
+                        }
                         editingMealType = null
+                        editingMealKcal = ""
                         Toast.makeText(ctx, "$selectedProfile's $type saved & synced!", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),

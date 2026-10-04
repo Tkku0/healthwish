@@ -21,8 +21,12 @@ import com.healthwish.app.backup.BackupWorker
 import com.healthwish.app.backup.ExportHelper
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
+import com.healthwish.app.ai.AiClient
+import com.healthwish.app.security.AiConfig
+import com.healthwish.app.security.AiConfigManager
 import com.healthwish.app.security.AppLockManager
 import com.healthwish.app.ui.components.*
+import com.healthwish.app.utils.PreferenceHelper
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -124,6 +128,12 @@ fun HistoryScreen() {
                     if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
                     if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
                     if (log.snacks.isNotBlank()) Text("🍿 Snacks: ${log.snacks}", fontSize = 13.sp)
+                    if (log.breakfastKcal + log.lunchKcal + log.dinnerKcal + log.snacksKcal > 0) {
+                        Text(
+                            "🔥 Total: ${log.breakfastKcal + log.lunchKcal + log.dinnerKcal + log.snacksKcal} kcal",
+                            color = AccentPink, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                        )
+                    }
                     Text("💧 Water: ${log.waterGlasses} glasses | Tasks: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
                     if (log.weightKg > 0) Text("⚖️ Weight: ${"%.1f".format(log.weightKg)} kg", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     if (log.dayNote.isNotBlank()) Text("💌 Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
@@ -158,6 +168,12 @@ fun HistoryScreen() {
                         if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
                         if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
                         if (log.snacks.isNotBlank()) Text("🍿 Snacks: ${log.snacks}", fontSize = 13.sp)
+                        if (log.breakfastKcal + log.lunchKcal + log.dinnerKcal + log.snacksKcal > 0) {
+                            Text(
+                                "🔥 Total: ${log.breakfastKcal + log.lunchKcal + log.dinnerKcal + log.snacksKcal} kcal",
+                                color = AccentPink, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                            )
+                        }
                         Text("💧 Water: ${log.waterGlasses} glasses | Tasks done: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
                         if (log.dayNote.isNotBlank()) {
                             Text("Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
@@ -181,6 +197,7 @@ fun HistoryScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onLogout: () -> Unit) {
     val ctx = LocalContext.current
@@ -190,6 +207,25 @@ fun SettingsScreen(onLogout: () -> Unit) {
     var pinText by remember { mutableStateOf("") }
     var backupPass by remember { mutableStateOf("") }
     var exporting by remember { mutableStateOf(false) }
+    // AI Setup state
+    val aiPresets = remember { AiConfigManager.PRESETS.keys.toList() }
+    var aiPreset by remember { mutableStateOf("Gemini (Google AI Studio)") }
+    var aiBase by remember { mutableStateOf(AiConfigManager.PRESETS["Gemini (Google AI Studio)"]!!.first) }
+    var aiKey by remember { mutableStateOf("") }
+    var aiModel by remember { mutableStateOf(AiConfigManager.PRESETS["Gemini (Google AI Studio)"]!!.second) }
+    var aiDrop by remember { mutableStateOf(false) }
+    var aiTesting by remember { mutableStateOf(false) }
+    var aiStatus by remember { mutableStateOf<String?>(null) }
+    var calTargetText by remember { mutableStateOf(PreferenceHelper.getCalorieTarget(ctx).toString()) }
+    LaunchedEffect(Unit) {
+        val saved = AiConfigManager.get(ctx)
+        if (saved.baseUrl.isNotBlank()) aiBase = saved.baseUrl
+        if (saved.model.isNotBlank()) aiModel = saved.model
+        if (saved.apiKey.isNotBlank()) aiKey = "••••••••"
+        val match = AiConfigManager.PRESETS.entries.find { it.value.first == saved.baseUrl }?.key
+        if (match != null) aiPreset = match
+        aiStatus = if (AiConfigManager.isConfigured(ctx)) "AI connected ✓ (${aiModel.ifBlank { saved.model }})" else null
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -238,6 +274,170 @@ fun SettingsScreen(onLogout: () -> Unit) {
                         Spacer(Modifier.width(8.dp))
                         Text("Export & Share CSV", fontWeight = FontWeight.Bold)
                     }
+                }
+            }
+        }
+
+        // AI Setup (custom key + model) + calorie target
+        item(key = "ai_setup") {
+            SectionHeader(
+                title = "AI Assistant ✨",
+                subtitle = "Apni API key + model — calorie auto-count"
+            )
+            ModernCard {
+                if (aiStatus != null) {
+                    Text(aiStatus!!, color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                Text(
+                    "Key sirf is phone me rehti hai, kahin upload nahi hoti. Gemini key: aistudio.google.com se free me lo.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                // Provider preset dropdown
+                ExposedDropdownMenuBox(
+                    expanded = aiDrop,
+                    onExpandedChange = { aiDrop = !aiDrop }
+                ) {
+                    OutlinedTextField(
+                        value = aiPreset,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Provider") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(aiDrop) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = aiDrop,
+                        onDismissRequest = { aiDrop = false }
+                    ) {
+                        aiPresets.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = {
+                                    aiPreset = name
+                                    val p = AiConfigManager.PRESETS[name]!!
+                                    if (p.first.isNotBlank()) aiBase = p.first
+                                    if (p.second.isNotBlank()) aiModel = p.second
+                                    aiDrop = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = aiBase,
+                    onValueChange = { aiBase = it },
+                    label = { Text("Base URL (OpenAI-compatible)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = aiKey,
+                    onValueChange = { aiKey = it },
+                    label = { Text("API Key (paste karo)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                )
+                OutlinedTextField(
+                    value = aiModel,
+                    onValueChange = { aiModel = it },
+                    label = { Text("Model (e.g. gemini-2.0-flash)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (aiBase.isBlank() || aiKey.isBlank() || aiModel.isBlank()) {
+                                Toast.makeText(ctx, " teeno fields bharo 🙂", Toast.LENGTH_SHORT).show()
+                            } else {
+                                // "••••" dikhe to purani saved key reuse karo
+                                val keyToSave = if (aiKey.all { it == '•' }) {
+                                    AiConfigManager.get(ctx).apiKey
+                                } else {
+                                    aiKey.trim()
+                                }
+                                AiConfigManager.save(ctx, AiConfig(aiBase.trim(), keyToSave, aiModel.trim()))
+                                aiStatus = "AI saved ✓ — Test dabake check karo"
+                                Toast.makeText(ctx, "AI Setup saved 🔑", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                    ) {
+                        Text("Save", color = Color(0xFF101018), fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = {
+                            val cfg = AiConfigManager.get(ctx)
+                            if (!AiConfigManager.isConfigured(ctx)) {
+                                Toast.makeText(ctx, "Pehle Save karo 🙂", Toast.LENGTH_SHORT).show()
+                            } else {
+                                aiTesting = true
+                                aiStatus = "Testing..."
+                                scope.launch {
+                                    try {
+                                        val res = AiClient.test(cfg)
+                                        aiStatus = "AI connected ✓ ($res)"
+                                    } catch (e: Exception) {
+                                        aiStatus = "Failed: ${(e.message ?: "error").take(120)}"
+                                    } finally {
+                                        aiTesting = false
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !aiTesting
+                    ) {
+                        Text(if (aiTesting) "..." else "Test 🔌")
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        AiConfigManager.clear(ctx)
+                        aiKey = ""
+                        aiStatus = null
+                        Toast.makeText(ctx, "AI Removed — manual mode", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Remove AI Key")
+                }
+                OutlinedTextField(
+                    value = calTargetText,
+                    onValueChange = { calTargetText = it.filter(Char::isDigit).take(5) },
+                    label = { Text("Daily calorie target (kcal)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true
+                )
+                Button(
+                    onClick = {
+                        val t = calTargetText.toIntOrNull()
+                        if (t != null && t in 500..10000) {
+                            PreferenceHelper.setCalorieTarget(ctx, t)
+                            Toast.makeText(ctx, "Target: $t kcal 🎯", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(ctx, "500-10000 ke beech likho", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentPurple)
+                ) {
+                    Text("Save Target")
                 }
             }
         }

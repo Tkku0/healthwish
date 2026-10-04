@@ -28,6 +28,10 @@ data class DayLog(
     val lunch: String = "",
     val dinner: String = "",
     val snacks: String = "",
+    val breakfastKcal: Int = 0,
+    val lunchKcal: Int = 0,
+    val dinnerKcal: Int = 0,
+    val snacksKcal: Int = 0,
     val waterGlasses: Int = 0,
     val wakeupTime: String = "", // HH:mm
     val sleepTime: String = "",  // HH:mm

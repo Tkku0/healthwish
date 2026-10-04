@@ -75,7 +75,8 @@ fun MealItem(
     title: String,
     value: String,
     isEditable: Boolean,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    kcal: Int = 0
 ) {
     val hasContent = value.isNotBlank()
     Row(
@@ -99,13 +100,22 @@ fun MealItem(
                 Text(emoji, fontSize = 20.sp)
             }
             Spacer(Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
                 Text(
                     if (hasContent) value else "Tap to add...",
                     color = if (hasContent) Color.White.copy(alpha = 0.9f) else TextMuted,
                     fontSize = 13.sp,
                     maxLines = 2
+                )
+            }
+            if (kcal > 0) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "🔥 $kcal",
+                    color = AccentPink,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
                 )
             }
         }

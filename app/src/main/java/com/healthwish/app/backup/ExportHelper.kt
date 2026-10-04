@@ -10,13 +10,15 @@ import java.io.File
 object ExportHelper {
     fun exportCsv(ctx: Context, logs: List<DayLog>): File {
         val sb = StringBuilder()
-        sb.appendLine("date,owner,screen_on_time,weight_kg,breakfast,lunch,dinner,snacks,water,wakeup,sleep,sleepMood,dayMood,dayNote,tasks_done,tasks_total")
+        sb.appendLine("date,owner,screen_on_time,weight_kg,total_kcal,breakfast,breakfast_kcal,lunch,lunch_kcal,dinner,dinner_kcal,snacks,snacks_kcal,water,wakeup,sleep,sleepMood,dayMood,dayNote,tasks_done,tasks_total")
         logs.sortedBy { it.dateKey }.forEach { l ->
             val done = l.tasks.count { it.done }
+            val total = l.breakfastKcal + l.lunchKcal + l.dinnerKcal + l.snacksKcal
             fun esc(s: String) = "\"${s.replace("\"", "'").replace("\n", " ")}\""
             sb.appendLine(
-                listOf(l.dateKey, l.ownerName, esc(l.screenOnTime), if (l.weightKg > 0) "%.1f".format(l.weightKg) else "", esc(l.breakfast), esc(l.lunch), esc(l.dinner),
-                    esc(l.snacks), l.waterGlasses.toString(), l.wakeupTime, l.sleepTime,
+                listOf(l.dateKey, l.ownerName, esc(l.screenOnTime), if (l.weightKg > 0) "%.1f".format(l.weightKg) else "", total.toString(),
+                    esc(l.breakfast), l.breakfastKcal.toString(), esc(l.lunch), l.lunchKcal.toString(), esc(l.dinner), l.dinnerKcal.toString(),
+                    esc(l.snacks), l.snacksKcal.toString(), l.waterGlasses.toString(), l.wakeupTime, l.sleepTime,
                     l.sleepMood, l.dayMood, esc(l.dayNote), done.toString(), l.tasks.size.toString()
                 ).joinToString(",")
             )
