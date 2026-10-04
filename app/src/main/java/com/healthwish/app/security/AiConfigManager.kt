@@ -17,6 +17,16 @@ object AiConfigManager {
     private const val KEY_BASE = "base_url"
     private const val KEY_KEY = "api_key"
     private const val KEY_MODEL = "model"
+    private const val KEY_PROMPT = "custom_prompt"
+
+    // Default nutrition rules — Settings > AI Prompt se edit ho sakta hai
+    const val DEFAULT_RULES =
+        "Use these standard home-style portions (average oil): " +
+            "1 roti (30g atta)=100; 1 katori cooked dal (150g)=150; 1 katori cooked rice (150g)=200; " +
+            "1 katori sabzi=130; 1 tsp oil/ghee=45; 1 glass milk (250ml)=150; 1 boiled egg=70; " +
+            "100g chicken curry=180; 100g paneer curry=250; 1 samosa=250; 1 cup chai (milk+sugar)=70; " +
+            "1 banana=105; 1 apple=95; 100g curd=65; 1 thali (2 roti+dal+rice+sabzi)=550. " +
+            "If quantity unclear, assume 1 standard serving. Always reply an integer."
 
     // Gemini ka OpenAI-compatible endpoint — AI Studio key seedha chalti hai
     val PRESETS: Map<String, Pair<String, String>> = linkedMapOf(
@@ -57,6 +67,24 @@ object AiConfigManager {
 
     fun clear(ctx: Context) {
         prefs(ctx).edit().clear().apply()
+    }
+
+    // Custom nutrition prompt (khali = default rules). Dono flows (manual + AI box) me judta hai.
+    fun getPrompt(ctx: Context): String {
+        val saved = prefs(ctx).getString(KEY_PROMPT, null)?.trim()
+        return if (saved.isNullOrBlank()) DEFAULT_RULES else saved
+    }
+
+    fun savePrompt(ctx: Context, text: String) {
+        prefs(ctx).edit().putString(KEY_PROMPT, text.trim()).apply()
+    }
+
+    fun resetPrompt(ctx: Context) {
+        prefs(ctx).edit().remove(KEY_PROMPT).apply()
+    }
+
+    fun isPromptCustomized(ctx: Context): Boolean {
+        return !(prefs(ctx).getString(KEY_PROMPT, null)?.trim().isNullOrBlank())
     }
 
     fun isConfigured(ctx: Context): Boolean {

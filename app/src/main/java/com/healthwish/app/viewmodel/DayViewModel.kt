@@ -150,7 +150,8 @@ class DayViewModel : ViewModel() {
                 if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) return@launch
                 if (text.isBlank()) return@launch
                 val (kcal, err) = com.healthwish.app.ai.AiClient.estimateCalories(
-                    com.healthwish.app.security.AiConfigManager.get(appCtx), text
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), text,
+                    com.healthwish.app.security.AiConfigManager.getPrompt(appCtx)
                 )
                 if (kcal == null) {
                     android.widget.Toast.makeText(
@@ -188,7 +189,8 @@ class DayViewModel : ViewModel() {
                     return@launch
                 }
                 val (res, err) = com.healthwish.app.ai.AiClient.parseFoodInput(
-                    com.healthwish.app.security.AiConfigManager.get(appCtx), input
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), input,
+                    com.healthwish.app.security.AiConfigManager.getPrompt(appCtx)
                 )
                 onResult(res, err)
             } catch (e: Exception) {

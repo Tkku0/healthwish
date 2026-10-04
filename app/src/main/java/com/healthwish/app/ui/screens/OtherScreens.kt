@@ -442,6 +442,63 @@ fun SettingsScreen(onLogout: () -> Unit) {
             }
         }
 
+        // AI Prompt editor (test karke perfect karo)
+        item(key = "ai_prompt") {
+            var promptText by remember { mutableStateOf(AiConfigManager.getPrompt(ctx)) }
+            var promptCustom by remember { mutableStateOf(AiConfigManager.isPromptCustomized(ctx)) }
+            SectionHeader(
+                title = "AI Prompt ✏️",
+                subtitle = if (promptCustom) "Custom prompt active" else "Default rules active"
+            )
+            ModernCard {
+                Text(
+                    "Ye instructions har calorie request ke sath jati hain. Portion values badlo, test karo, best wali rakho.",
+                    color = TextMuted,
+                    fontSize = 12.sp
+                )
+                OutlinedTextField(
+                    value = promptText,
+                    onValueChange = { promptText = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    minLines = 6
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (promptText.isBlank()) {
+                                Toast.makeText(ctx, "Khaali mat chhodo 🙂", Toast.LENGTH_SHORT).show()
+                            } else {
+                                AiConfigManager.savePrompt(ctx, promptText)
+                                promptCustom = true
+                                Toast.makeText(ctx, "Prompt saved — ab test karo ✨", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentPink)
+                    ) {
+                        Text("Save Prompt", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            AiConfigManager.resetPrompt(ctx)
+                            promptText = AiConfigManager.DEFAULT_RULES
+                            promptCustom = false
+                            Toast.makeText(ctx, "Default wapas ✓", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Reset Default")
+                    }
+                }
+            }
+        }
+
         // App Lock
         item {
             SectionHeader(

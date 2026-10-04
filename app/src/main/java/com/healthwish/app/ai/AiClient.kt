@@ -131,23 +131,14 @@ object AiClient {
         return m?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..5000 }
     }
 
-    // Standard Indian portions — taaki har model/app lagbhag SAME number de (consistency fix)
-    private const val PORTION_TABLE =
-        "Use these standard home-style portions (average oil): " +
-            "1 roti (30g atta)=100; 1 katori cooked dal (150g)=150; 1 katori cooked rice (150g)=200; " +
-            "1 katori sabzi=130; 1 tsp oil/ghee=45; 1 glass milk (250ml)=150; 1 boiled egg=70; " +
-            "100g chicken curry=180; 100g paneer curry=250; 1 samosa=250; 1 cup chai (milk+sugar)=70; " +
-            "1 banana=105; 1 apple=95; 100g curd=65; 1 thali (2 roti+dal+rice+sabzi)=550. " +
-            "If quantity unclear, assume 1 standard serving. Always reply an integer."
-
     // Manual entry par auto-calorie. Returns (kcal, error?) — error null matlab success.
-    suspend fun estimateCalories(cfg: AiConfig, foodText: String): Pair<Int?, String?> {
+    suspend fun estimateCalories(cfg: AiConfig, foodText: String, rules: String): Pair<Int?, String?> {
         if (foodText.isBlank()) return Pair(null, null)
         return try {
             val out = chat(
                 cfg,
                 "You estimate calories for Indian food. Reply with ONLY JSON like {\"calories\": 450}. " +
-                    "Estimate total kcal for the whole described meal. " + PORTION_TABLE,
+                    "Estimate total kcal for the whole described meal. " + rules,
                 "Meal: $foodText"
             )
             val kcal = extractKcal(out)
@@ -159,7 +150,7 @@ object AiClient {
     }
 
     // Free-text entry: kaunsa meal + saaf text + calories — teeno ek call me.
-    suspend fun parseFoodInput(cfg: AiConfig, input: String): Pair<AiMealResult?, String?> {
+    suspend fun parseFoodInput(cfg: AiConfig, input: String, rules: String): Pair<AiMealResult?, String?> {
         if (input.isBlank()) return Pair(null, null)
         return try {
             val out = chat(
@@ -171,7 +162,7 @@ object AiClient {
                     "Map morning/subah/breakfast/nashta to breakfast; afternoon/dopahar/lunch to lunch; " +
                     "night/raat/dinner to dinner; evening snacks/chai-time/munching to snacks. " +
                     "If no time given, default to snacks. Rewrite text cleanly with quantities. " +
-                    "Estimate total kcal as an integer. " + PORTION_TABLE,
+                    "Estimate total kcal as an integer. " + rules,
                 input
             )
             val j = JSONObject(extractJsonObject(out))
