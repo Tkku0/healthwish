@@ -120,7 +120,7 @@ object AiClient {
     }
 
     // {..} block nikalo (model ne aas-paas text likh diya ho tab bhi)
-    private fun extractJsonObject(raw: String): String {
+    fun extractJsonObject(raw: String): String {
         val t = raw.trim()
         if (t.startsWith("{") && t.endsWith("}")) return t
         val s = t.indexOf('{')
@@ -129,7 +129,7 @@ object AiClient {
         return t
     }
 
-    private fun extractKcal(raw: String): Int? {
+    fun extractKcal(raw: String): Int? {
         try {
             JSONObject(extractJsonObject(raw)).optInt("calories", -1)
                 .takeIf { it >= 0 }?.let { return it }
@@ -175,21 +175,23 @@ object AiClient {
                     "Estimate total kcal as an integer. " + rules,
                 input
             )
-            val j = JSONObject(extractJsonObject(out))
-            val meal = j.optString("meal", "snacks").lowercase()
-            val kcal = j.optInt("calories", -1).takeIf { it >= 0 }
-                ?: extractKcal(out) ?: 0
-            Pair(
-                AiMealResult(
-                    meal = if (meal in setOf("breakfast", "lunch", "dinner", "snacks")) meal else "snacks",
-                    text = j.optString("text", input).trim().ifBlank { input.trim() },
-                    calories = kcal
-                ),
-                null
-            )
+            Pair(parseJsonResult(out, input), null)
         } catch (e: Exception) {
             Pair(null, e.message ?: "AI fail")
         }
+    }
+
+    // AI-box reply (kisi bhi backend se) → structured result. Router bhi yahi use karta hai.
+    fun parseJsonResult(out: String, input: String): AiMealResult {
+        val j = JSONObject(extractJsonObject(out))
+        val meal = j.optString("meal", "snacks").lowercase()
+        val kcal = j.optInt("calories", -1).takeIf { it >= 0 }
+            ?: extractKcal(out) ?: 0
+        return AiMealResult(
+            meal = if (meal in setOf("breakfast", "lunch", "dinner", "snacks")) meal else "snacks",
+            text = j.optString("text", input).trim().ifBlank { input.trim() },
+            calories = kcal
+        )
     }
 
     // Settings me Test button ke liye

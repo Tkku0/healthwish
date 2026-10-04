@@ -18,6 +18,10 @@ object AiConfigManager {
     private const val KEY_KEY = "api_key"
     private const val KEY_MODEL = "model"
     private const val KEY_PROMPT = "custom_prompt"
+    private const val KEY_BACKEND = "backend" // "key" (API key) ya "google" (Google login)
+
+    const val BACKEND_KEY = "key"
+    const val BACKEND_GOOGLE = "google"
 
     // Built-in shared defaults — GF ko kuch setup nahi karna padega.
     // NOTE: ye key APK/repo me rahegi; decompile se nikal sakti hai. Abuse lage to Groq se revoke karo.
@@ -128,5 +132,16 @@ object AiConfigManager {
     fun isConfigured(ctx: Context): Boolean {
         val c = get(ctx)
         return c.baseUrl.startsWith("http") && c.apiKey.length >= 8 && c.model.isNotBlank()
+    }
+
+    fun getBackend(ctx: Context): String {
+        val b = prefs(ctx).getString(KEY_BACKEND, BACKEND_KEY) ?: BACKEND_KEY
+        return if (b == BACKEND_GOOGLE) BACKEND_GOOGLE else BACKEND_KEY
+    }
+
+    fun setBackend(ctx: Context, backend: String) {
+        prefs(ctx).edit().putString(
+            KEY_BACKEND, if (backend == BACKEND_GOOGLE) BACKEND_GOOGLE else BACKEND_KEY
+        ).apply()
     }
 }

@@ -24,9 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.healthwish.app.ai.AiMealResult
+import com.healthwish.app.ai.AiRouter
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
-import com.healthwish.app.security.AiConfigManager
 import com.healthwish.app.ui.components.*
 import com.healthwish.app.utils.PreferenceHelper
 import com.healthwish.app.utils.ScreenTimeHelper
@@ -455,7 +455,7 @@ fun TodayScreen(vm: DayViewModel) {
             val totalKcal = activeLog.breakfastKcal + activeLog.lunchKcal +
                 activeLog.dinnerKcal + activeLog.snacksKcal
             val kcalTarget = remember { PreferenceHelper.getCalorieTarget(ctx) }
-            val aiOn = remember { AiConfigManager.isConfigured(ctx) }
+            val aiOn = remember { AiRouter.isReady(ctx) }
             var showAiBox by remember { mutableStateOf(false) }
             var aiInput by remember { mutableStateOf("") }
             var aiBusy by remember { mutableStateOf(false) }
@@ -568,8 +568,8 @@ fun TodayScreen(vm: DayViewModel) {
                             onClick = {
                                 if (aiInput.isBlank()) {
                                     Toast.makeText(ctx, "Pehle kuch likho 🙂", Toast.LENGTH_SHORT).show()
-                                } else if (!AiConfigManager.isConfigured(ctx)) {
-                                    Toast.makeText(ctx, "Settings > AI Setup me key dalo 🔑", Toast.LENGTH_LONG).show()
+                                } else if (!AiRouter.isReady(ctx)) {
+                                    Toast.makeText(ctx, "Settings > AI me setup karo (Key ya Google Login) 🔑", Toast.LENGTH_LONG).show()
                                 } else {
                                     aiBusy = true
                                     aiPreview = null
