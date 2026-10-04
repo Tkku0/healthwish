@@ -19,11 +19,7 @@ object AiConfigManager {
     private const val KEY_MODEL = "model"
     private const val KEY_PROMPT = "custom_prompt"
 
-    // Built-in shared defaults — GF ko kuch setup nahi karna padega.
-    // NOTE: ye key APK/repo me rahegi; decompile se nikal sakti hai. Abuse lage to Groq se revoke karo.
-    private const val BUILTIN_BASE = "https://api.groq.com/openai/v1"
-    private const val BUILTIN_MODEL = "openai/gpt-oss-120b"
-    private const val BUILTIN_KEY = "***REVOKED***"
+    // Koi built-in key nahi — user jo save karega sirf wahi chalega.
 
     // Purana default (portion-table era) — jinhone ise edit nahi kiya unhe naya default milega
     private const val LEGACY_DEFAULT_V1 =
@@ -71,21 +67,18 @@ object AiConfigManager {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    // Saved values win; jo khaali ho wahan built-in default lagta hai (zero-setup for family).
+    // Sirf saved values — kuch save nahi to AI off. Koi hidden default nahi.
     fun get(ctx: Context): AiConfig {
         val p = prefs(ctx)
-        val base = (p.getString(KEY_BASE, "") ?: "").trim().trimEnd('/')
-        val key = (p.getString(KEY_KEY, "") ?: "").trim()
-        val model = (p.getString(KEY_MODEL, "") ?: "").trim()
         return AiConfig(
-            baseUrl = if (base.isBlank()) BUILTIN_BASE else base,
-            apiKey = if (key.isBlank()) BUILTIN_KEY else key,
-            model = if (model.isBlank()) BUILTIN_MODEL else model
+            baseUrl = (p.getString(KEY_BASE, "") ?: "").trim().trimEnd('/'),
+            apiKey = (p.getString(KEY_KEY, "") ?: "").trim(),
+            model = (p.getString(KEY_MODEL, "") ?: "").trim()
         )
     }
 
-    // true = apni key dali hui hai; false = built-in shared key chal rahi hai
-    fun isUsingCustomKey(ctx: Context): Boolean {
+    // true = user ne apni key save ki hui hai
+    fun hasSavedKey(ctx: Context): Boolean {
         return !((prefs(ctx).getString(KEY_KEY, "") ?: "").trim().isBlank())
     }
 
