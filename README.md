@@ -1,6 +1,12 @@
 # HealthWish 💜 - Personal Couple Diet + Sleep App
 Personal use only. No Play Store. arm64 (OnePlus / Realme).
 
+## 📥 Direct Download (Final App)
+
+**[⬇️ Download HealthWish.apk (v1.0 Final)](https://github.com/Shubhamkothar/healthwish/releases/download/v1.0-final/HealthWish.apk)**
+
+Phone me kholo > Install > Tkku/Shumu select karo > login karo. Bas!
+
 ## Kya-kya ready hai
 - Today: breakfast/lunch/dinner/snacks + water + photo note ready
 - Rituals: Morning Walk, Exercise, Meditation, Evening Walk + `+ Custom Task` (sirf uss din ke liye)
