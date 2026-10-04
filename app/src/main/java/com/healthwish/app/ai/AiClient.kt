@@ -31,6 +31,8 @@ object AiClient {
                 setRequestProperty("Authorization", "Bearer $apiKey")
                 setRequestProperty("HTTP-Referer", "https://github.com/Shubhamkothar/healthwish")
                 setRequestProperty("X-Title", "HealthWish")
+                // Default Dalvik UA ko kabhi-kabhi Cloudflare block kar deta hai — browser UA safe
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) HealthWish/1.0")
             }
             try {
                 try {
@@ -82,30 +84,38 @@ object AiClient {
 
     private suspend fun chat(cfg: AiConfig, system: String, user: String): String {
         val url = cfg.baseUrl.trimEnd('/') + "/chat/completions"
-        return try {
-            val raw = postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = true))
-            choiceText(raw)
-        } catch (e: RuntimeException) {
-            // Kuch models (khaas free wale) json_mode reject karte hain — bina uske retry
-            val msg = e.message ?: ""
-            if (msg.contains("response_format", ignoreCase = true) ||
-                msg.contains("json mode", ignoreCase = true) ||
-                msg.contains(" 400")
-            ) {
-                val raw = postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = false))
-                choiceText(raw)
-            } else {
-                throw e
-            }
+        // 1st try: JSON mode
+        val first = runCatching {
+            choiceText(postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = true)))
         }
+        if (first.getOrNull()?.isNotBlank() == true) return first.getOrThrow()
+        val firstErr = first.exceptionOrNull()
+        val firstMsg = firstErr?.message ?: ""
+        // JSON-mode reject (400) ho ya khaali reply aaya ho — bina JSON mode ke retry
+        if (firstMsg.contains("response_format", ignoreCase = true) ||
+            firstMsg.contains("json mode", ignoreCase = true) ||
+            firstMsg.contains(" 400") ||
+            firstErr == null || firstMsg.isBlank()
+        ) {
+            val second = runCatching {
+                choiceText(postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = false)))
+            }
+            if (second.getOrNull()?.isNotBlank() == true) return second.getOrThrow()
+            val sErr = second.exceptionOrNull()?.message
+            throw RuntimeException(
+                if (!sErr.isNullOrBlank()) sErr
+                else "AI ne khaali reply diya (2 tries) — thodi der me retry karo ya model badlo"
+            )
+        }
+        throw firstErr ?: RuntimeException("AI fail")
     }
 
     private fun choiceText(raw: String): String {
-        val content = JSONObject(raw)
-            .getJSONArray("choices")
-            .getJSONObject(0)
-            .getJSONObject("message")
-            .getString("content")
+        val choices = JSONObject(raw).optJSONArray("choices")
+            ?: throw RuntimeException("AI reply me choices nahi — retry karo")
+        if (choices.length() == 0) throw RuntimeException("AI reply khaali — retry karo")
+        val content = choices.getJSONObject(0)
+            .optJSONObject("message")?.optString("content", "") ?: ""
         return content.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
     }
 
