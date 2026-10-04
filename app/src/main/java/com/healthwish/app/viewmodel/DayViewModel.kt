@@ -141,15 +141,23 @@ class DayViewModel : ViewModel() {
             }
         }
 
-    // Manual entry ke baad AI auto-calorie: sirf tab jab text abhi bhi wahi hai (stale overwrite nahi)
+    // Manual entry ke baad AI auto-calorie: sirf tab jab text abhi bhi wahi hai (stale overwrite nahi).
+    // Fail ho to chup nahi — chhota reason toast me (sirf jab AI setup hai).
     fun estimateKcal(ctx: android.content.Context, profile: String, type: String, text: String) {
         val appCtx = ctx.applicationContext
         viewModelScope.launch {
             try {
-                val cfg = com.healthwish.app.security.AiConfigManager.get(appCtx)
                 if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) return@launch
                 if (text.isBlank()) return@launch
-                val kcal = com.healthwish.app.ai.AiClient.estimateCalories(cfg, text) ?: return@launch
+                val (kcal, err) = com.healthwish.app.ai.AiClient.estimateCalories(
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), text
+                )
+                if (kcal == null) {
+                    android.widget.Toast.makeText(
+                        appCtx, "Calorie AI fail: ${(err ?: "pata nahi").take(100)}", android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
                 val isTkku = profile.equals("Tkku", ignoreCase = true)
                 val current = if (isTkku) _tkkuLog.value else _shumuLog.value
                 val curText = when (type) {
@@ -166,27 +174,26 @@ class DayViewModel : ViewModel() {
         }
     }
 
-    // AI free-text entry: callback me parsed result (null = AI fail/off)
+    // AI free-text entry: callback me (result, error?). error null matlab success.
     fun parseFoodInput(
         ctx: android.content.Context,
         input: String,
-        onResult: (com.healthwish.app.ai.AiMealResult?) -> Unit
+        onResult: (com.healthwish.app.ai.AiMealResult?, String?) -> Unit
     ) {
         val appCtx = ctx.applicationContext
         viewModelScope.launch {
             try {
                 if (!com.healthwish.app.security.AiConfigManager.isConfigured(appCtx)) {
-                    onResult(null)
+                    onResult(null, "Settings > AI Setup me key dalo 🔑")
                     return@launch
                 }
-                onResult(
-                    com.healthwish.app.ai.AiClient.parseFoodInput(
-                        com.healthwish.app.security.AiConfigManager.get(appCtx), input
-                    )
+                val (res, err) = com.healthwish.app.ai.AiClient.parseFoodInput(
+                    com.healthwish.app.security.AiConfigManager.get(appCtx), input
                 )
+                onResult(res, err)
             } catch (e: Exception) {
                 e.printStackTrace()
-                onResult(null)
+                onResult(null, e.message ?: "AI fail")
             }
         }
     }

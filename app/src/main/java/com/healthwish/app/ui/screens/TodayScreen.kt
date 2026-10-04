@@ -460,6 +460,7 @@ fun TodayScreen(vm: DayViewModel) {
             var aiInput by remember { mutableStateOf("") }
             var aiBusy by remember { mutableStateOf(false) }
             var aiPreview by remember { mutableStateOf<AiMealResult?>(null) }
+            var aiError by remember { mutableStateOf<String?>(null) }
 
             SectionHeader(
                 title = "3. Food & Diet Log 🍱",
@@ -572,10 +573,11 @@ fun TodayScreen(vm: DayViewModel) {
                                 } else {
                                     aiBusy = true
                                     aiPreview = null
-                                    vm.parseFoodInput(ctx, aiInput.trim()) { res ->
+                                    aiError = null
+                                    vm.parseFoodInput(ctx, aiInput.trim()) { res, err ->
                                         aiBusy = false
                                         if (res == null) {
-                                            Toast.makeText(ctx, "AI samajh nahi paya / net check karo", Toast.LENGTH_SHORT).show()
+                                            aiError = err ?: "AI fail"
                                         } else {
                                             aiPreview = res
                                         }
@@ -589,9 +591,18 @@ fun TodayScreen(vm: DayViewModel) {
                         ) {
                             Text(if (aiBusy) "Soch raha hai..." else "Analyze ✨", fontWeight = FontWeight.Bold)
                         }
-                        IconButton(onClick = { showAiBox = false; aiPreview = null }) {
+                        IconButton(onClick = { showAiBox = false; aiPreview = null; aiError = null }) {
                             Icon(Icons.Default.Close, null)
                         }
+                    }
+                    val errText = aiError
+                    if (errText != null) {
+                        Text(
+                            "⚠️ $errText",
+                            color = AccentPink,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                     val preview = aiPreview
                     if (preview != null) {

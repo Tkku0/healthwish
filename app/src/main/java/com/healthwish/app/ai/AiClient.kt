@@ -4,6 +4,7 @@ import com.healthwish.app.security.AiConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -19,54 +20,120 @@ object AiClient {
 
     private const val TIMEOUT_MS = 30000
 
-    private suspend fun chat(cfg: AiConfig, system: String, user: String): String =
+    private suspend fun postJson(url: String, apiKey: String, body: String): String =
         withContext(Dispatchers.IO) {
-            val url = URL(cfg.baseUrl.trimEnd('/') + "/chat/completions")
-            val body = JSONObject()
-                .put("model", cfg.model)
-                .put("temperature", 0.2)
-                .put("max_tokens", 300)
-                .put("response_format", JSONObject().put("type", "json_object"))
-                .put("messages", org.json.JSONArray()
-                    .put(JSONObject().put("role", "system").put("content", system))
-                    .put(JSONObject().put("role", "user").put("content", user))
-                )
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Authorization", "Bearer ${cfg.apiKey}")
+                setRequestProperty("Authorization", "Bearer $apiKey")
+                setRequestProperty("HTTP-Referer", "https://github.com/Shubhamkothar/healthwish")
+                setRequestProperty("X-Title", "HealthWish")
             }
             try {
-                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-                val code = conn.responseCode
-                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                try {
+                    conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                } catch (e: IOException) {
+                    throw RuntimeException("Net fail (${e.message}) — internet check karo")
+                }
+                val code = try {
+                    conn.responseCode
+                } catch (e: IOException) {
+                    throw RuntimeException("Net fail (${e.message}) — internet check karo")
+                }
+                val stream = try {
+                    if (code in 200..299) conn.inputStream else conn.errorStream
+                } catch (e: IOException) {
+                    throw RuntimeException("Net fail (${e.message})")
+                } ?: throw RuntimeException("AI error $code (empty reply)")
                 val raw = stream.bufferedReader().use { it.readText() }
                 if (code !in 200..299) {
-                    val msg = try {
-                        JSONObject(raw).optJSONObject("error")?.optString("message", raw)
-                            ?: raw.take(200)
-                    } catch (e: Exception) {
-                        raw.take(200)
-                    }
-                    throw RuntimeException("AI error $code: $msg")
+                    throw RuntimeException("AI error $code: ${shortError(raw)}")
                 }
-                val content = JSONObject(raw)
-                    .getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-                content.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+                raw
             } finally {
                 conn.disconnect()
             }
         }
 
-    // Manual entry par auto-calorie: sirf number nikalta hai
-    suspend fun estimateCalories(cfg: AiConfig, foodText: String): Int? {
-        if (foodText.isBlank()) return null
+    private fun shortError(raw: String): String {
+        return try {
+            val err = JSONObject(raw).optJSONObject("error")
+            (err?.optString("message", "")?.ifBlank { null } ?: raw).take(160)
+        } catch (e: Exception) {
+            raw.take(160).ifBlank { "unknown error" }
+        }
+    }
+
+    private fun chatBody(cfg: AiConfig, system: String, user: String, jsonMode: Boolean): String {
+        val root = JSONObject()
+            .put("model", cfg.model)
+            .put("temperature", 0.2)
+            .put("max_tokens", 300)
+            .put("messages", org.json.JSONArray()
+                .put(JSONObject().put("role", "system").put("content", system))
+                .put(JSONObject().put("role", "user").put("content", user))
+            )
+        if (jsonMode) root.put("response_format", JSONObject().put("type", "json_object"))
+        return root.toString()
+    }
+
+    private suspend fun chat(cfg: AiConfig, system: String, user: String): String {
+        val url = cfg.baseUrl.trimEnd('/') + "/chat/completions"
+        return try {
+            val raw = postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = true))
+            choiceText(raw)
+        } catch (e: RuntimeException) {
+            // Kuch models (khaas free wale) json_mode reject karte hain — bina uske retry
+            val msg = e.message ?: ""
+            if (msg.contains("response_format", ignoreCase = true) ||
+                msg.contains("json mode", ignoreCase = true) ||
+                msg.contains(" 400")
+            ) {
+                val raw = postJson(url, cfg.apiKey, chatBody(cfg, system, user, jsonMode = false))
+                choiceText(raw)
+            } else {
+                throw e
+            }
+        }
+    }
+
+    private fun choiceText(raw: String): String {
+        val content = JSONObject(raw)
+            .getJSONArray("choices")
+            .getJSONObject(0)
+            .getJSONObject("message")
+            .getString("content")
+        return content.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    }
+
+    // {..} block nikalo (model ne aas-paas text likh diya ho tab bhi)
+    private fun extractJsonObject(raw: String): String {
+        val t = raw.trim()
+        if (t.startsWith("{") && t.endsWith("}")) return t
+        val s = t.indexOf('{')
+        val e = t.lastIndexOf('}')
+        if (s >= 0 && e > s) return t.substring(s, e + 1)
+        return t
+    }
+
+    private fun extractKcal(raw: String): Int? {
+        try {
+            JSONObject(extractJsonObject(raw)).optInt("calories", -1)
+                .takeIf { it >= 0 }?.let { return it }
+        } catch (e: Exception) {
+            // neeche fallback
+        }
+        // Fallback: "450 kcal / 450 calories" jaisa pehla number
+        val m = Regex("(\\d{2,4})\\s*(kcal|calories|\\bcal\\b)", RegexOption.IGNORE_CASE).find(raw)
+        return m?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..5000 }
+    }
+
+    // Manual entry par auto-calorie. Returns (kcal, error?) — error null matlab success.
+    suspend fun estimateCalories(cfg: AiConfig, foodText: String): Pair<Int?, String?> {
+        if (foodText.isBlank()) return Pair(null, null)
         return try {
             val out = chat(
                 cfg,
@@ -74,15 +141,17 @@ object AiClient {
                     "Estimate total kcal for the whole described meal. If unsure, give your best guess as an integer.",
                 "Meal: $foodText"
             )
-            JSONObject(out).optInt("calories", -1).takeIf { it >= 0 }
+            val kcal = extractKcal(out)
+            if (kcal != null) Pair(kcal, null)
+            else Pair(null, "AI reply samajh nahi aaya")
         } catch (e: Exception) {
-            null
+            Pair(null, e.message ?: "AI fail")
         }
     }
 
-    // Free-text entry: kaunsa meal + saaf text + calories — teeno ek call me
-    suspend fun parseFoodInput(cfg: AiConfig, input: String): AiMealResult? {
-        if (input.isBlank()) return null
+    // Free-text entry: kaunsa meal + saaf text + calories — teeno ek call me.
+    suspend fun parseFoodInput(cfg: AiConfig, input: String): Pair<AiMealResult?, String?> {
+        if (input.isBlank()) return Pair(null, null)
         return try {
             val out = chat(
                 cfg,
@@ -96,19 +165,24 @@ object AiClient {
                     "Estimate total kcal as an integer (best guess for Indian portions).",
                 input
             )
-            val j = JSONObject(out)
+            val j = JSONObject(extractJsonObject(out))
             val meal = j.optString("meal", "snacks").lowercase()
-            AiMealResult(
-                meal = if (meal in setOf("breakfast", "lunch", "dinner", "snacks")) meal else "snacks",
-                text = j.optString("text", input).trim().ifBlank { input.trim() },
-                calories = j.optInt("calories", 0).coerceAtLeast(0)
+            val kcal = j.optInt("calories", -1).takeIf { it >= 0 }
+                ?: extractKcal(out) ?: 0
+            Pair(
+                AiMealResult(
+                    meal = if (meal in setOf("breakfast", "lunch", "dinner", "snacks")) meal else "snacks",
+                    text = j.optString("text", input).trim().ifBlank { input.trim() },
+                    calories = kcal
+                ),
+                null
             )
         } catch (e: Exception) {
-            null
+            Pair(null, e.message ?: "AI fail")
         }
     }
 
-    // Settings me Test button ke liye — kaam kiya to model ka short reply, nahi to error
+    // Settings me Test button ke liye
     suspend fun test(cfg: AiConfig): String {
         val out = chat(
             cfg,
@@ -116,7 +190,7 @@ object AiClient {
             "ping"
         )
         return try {
-            JSONObject(out).optString("ok", out.take(120)).ifBlank { "Connected ✓" }
+            JSONObject(extractJsonObject(out)).optString("ok", out.take(120)).ifBlank { "Connected ✓" }
         } catch (e: Exception) {
             out.take(120)
         }
