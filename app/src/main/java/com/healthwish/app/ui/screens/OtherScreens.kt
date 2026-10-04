@@ -128,7 +128,7 @@ fun HistoryScreen() {
             }
         } else if (logs.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No past history found yet.\nStart logging today!", color = TextMuted)
+                Text("No past history found yet for $selectedProfile.\nStart logging today!", color = TextMuted)
             }
         } else {
             LazyColumn(
@@ -136,7 +136,7 @@ fun HistoryScreen() {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 90.dp)
             ) {
-                items(logs) { log ->
+                items(logs, key = { it.id.ifBlank { "${it.dateKey}_${it.ownerName}" } }) { log ->
                     ModernCard {
                         Row(
                             modifier = Modifier.fillMaxWidth(),

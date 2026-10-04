@@ -83,20 +83,22 @@ fun TodayScreen(vm: DayViewModel) {
         null
     }
 
-    // Auto sync screen time for the profile belonging to this phone
+    // Auto sync screen time for the profile belonging to this phone (executed on IO coroutine)
     var hasUsagePermission by remember { mutableStateOf(ScreenTimeHelper.hasUsagePermission(ctx)) }
     LaunchedEffect(myDeviceProfile, hasUsagePermission) {
-        val prof = myDeviceProfile
-        if (prof != null && hasUsagePermission) {
-            // 1. Sync Today's Screen Time
-            val todayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, 0)
-            val formattedToday = ScreenTimeHelper.formatMillis(todayMillis)
-            vm.syncScreenTime(prof, formattedToday)
+        val prof = myDeviceProfile ?: return@LaunchedEffect
+        if (hasUsagePermission) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                // 1. Sync Today's Screen Time
+                val todayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, 0)
+                val formattedToday = ScreenTimeHelper.formatMillis(todayMillis)
+                vm.syncScreenTime(prof, formattedToday)
 
-            // 2. Auto backfill yesterday's final screen time if missing
-            val ydayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, -1)
-            val formattedYday = ScreenTimeHelper.formatMillis(ydayMillis)
-            vm.backfillYesterdayScreenTime(prof, formattedYday)
+                // 2. Auto backfill yesterday's final screen time if missing
+                val ydayMillis = ScreenTimeHelper.getScreenOnTimeMillis(ctx, -1)
+                val formattedYday = ScreenTimeHelper.formatMillis(ydayMillis)
+                vm.backfillYesterdayScreenTime(prof, formattedYday)
+            }
         }
     }
 
@@ -148,7 +150,7 @@ fun TodayScreen(vm: DayViewModel) {
         contentPadding = PaddingValues(top = 8.dp, bottom = 90.dp)
     ) {
         // 1. Tkku & Shumu Selector
-        item {
+        item(key = "profile_selector") {
             SingleChoiceSegmentedButtonRow(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             ) {
@@ -186,7 +188,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 2. SYSTEMATIC STEP 1: Morning Wake-up & Sleep Quality
-        item {
+        item(key = "sleep_card") {
             SectionHeader(
                 title = "1. Sleep & Wake-up 😴",
                 subtitle = "Subah uthne ka time aur neend ki quality"
@@ -284,7 +286,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 3. AUTO SCREEN ON TIME CARD
-        item {
+        item(key = "screen_time_card") {
             SectionHeader(
                 title = "📱 Screen On Time",
                 subtitle = "Automatic daily phone usage tracking"
@@ -331,7 +333,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 4. SYSTEMATIC STEP 2: Morning Walk, Exercise & Rituals
-        item {
+        item(key = "rituals_card") {
             val tasks = activeLog.tasks
             val completedCount = tasks.count { it.done }
             val progress = if (tasks.isEmpty()) 0f else completedCount / tasks.size.toFloat()
@@ -351,31 +353,33 @@ fun TodayScreen(vm: DayViewModel) {
                 )
 
                 tasks.forEach { task ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF1E1E2C))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Checkbox(
-                                checked = task.done,
-                                onCheckedChange = { vm.toggleTask(selectedProfile, task) },
-                                colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Column {
-                                Text(
-                                    "${task.emoji}  ${task.title}",
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 15.sp,
-                                    color = if (task.done) Color.White.copy(alpha = 0.6f) else Color.White
+                    key(task.id) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF1E1E2C))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Checkbox(
+                                    checked = task.done,
+                                    onCheckedChange = { vm.toggleTask(selectedProfile, task) },
+                                    colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
                                 )
-                                if (task.time.isNotBlank()) {
-                                    Text(task.time, color = TextMuted, fontSize = 12.sp)
+                                Spacer(Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        "${task.emoji}  ${task.title}",
+                                        fontWeight = FontWeight.Medium,
+                                        fontSize = 15.sp,
+                                        color = if (task.done) Color.White.copy(alpha = 0.6f) else Color.White
+                                    )
+                                    if (task.time.isNotBlank()) {
+                                        Text(task.time, color = TextMuted, fontSize = 12.sp)
+                                    }
                                 }
                             }
                         }
@@ -426,7 +430,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 5. SYSTEMATIC STEP 3: Breakfast, Lunch, Dinner & Snacks
-        item {
+        item(key = "food_card") {
             SectionHeader(
                 title = "3. Food & Diet Log 🍱",
                 subtitle = "Tap any plate to add or update"
@@ -476,7 +480,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 6. Water Tracker
-        item {
+        item(key = "water_card") {
             WaterTrackerRow(
                 glasses = activeLog.waterGlasses,
                 isEditable = true,
@@ -485,7 +489,7 @@ fun TodayScreen(vm: DayViewModel) {
         }
 
         // 7. SYSTEMATIC STEP 4: Night Day Completion & Mood (Sabse aakhir me)
-        item {
+        item(key = "reflection_card") {
             var noteText by remember(activeLog.dayNote) { mutableStateOf(activeLog.dayNote) }
             SectionHeader(
                 title = "4. End of Day Reflection ✨",

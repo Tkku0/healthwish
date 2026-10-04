@@ -1,8 +1,10 @@
 package com.healthwish.app.model
 
+import androidx.compose.runtime.Immutable
 import com.google.firebase.Timestamp
 
 // One doc per user per day: couples/{coupleId}/days/{dateKey_uid}
+@Immutable
 data class HabitTask(
     val id: String = "",
     val title: String = "",
@@ -15,6 +17,7 @@ data class HabitTask(
     fun getIsDefault() = isDefault
 }
 
+@Immutable
 data class DayLog(
     val id: String = "",
     val ownerUid: String = "",

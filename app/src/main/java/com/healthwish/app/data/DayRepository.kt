@@ -53,11 +53,13 @@ object DayRepository {
     suspend fun loadRange(profile: String, days: Int = 30): List<DayLog> {
         return try {
             val snap = db.collection("couples").document(COUPLE_ID)
-                .collection("days")
-                .whereEqualTo("ownerName", profile)
-                .limit(days * 2L).get().await()
-            snap.toObjects(DayLog::class.java).sortedByDescending { it.dateKey }
+                .collection("days").get().await()
+            val all = snap.toObjects(DayLog::class.java)
+            all.filter { it.ownerName.equals(profile, ignoreCase = true) || it.id.endsWith(profile.lowercase()) }
+                .sortedByDescending { it.dateKey }
+                .take(days)
         } catch (e: Exception) {
+            e.printStackTrace()
             emptyList()
         }
     }

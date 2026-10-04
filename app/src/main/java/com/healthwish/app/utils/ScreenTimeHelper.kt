@@ -29,9 +29,10 @@ object ScreenTimeHelper {
     }
 
     // Calculates screen-on time in milliseconds for a specific day offset (0 = today, -1 = yesterday)
-    fun getScreenOnTimeMillis(ctx: Context, dayOffset: Int = 0): Long {
-        if (!hasUsagePermission(ctx)) return 0L
-        val usageManager = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return 0L
+    // Run on IO dispatcher to avoid blocking UI main thread
+    suspend fun getScreenOnTimeMillis(ctx: Context, dayOffset: Int = 0): Long = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (!hasUsagePermission(ctx)) return@withContext 0L
+        val usageManager = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return@withContext 0L
 
         val cal = Calendar.getInstance()
         cal.add(Calendar.DAY_OF_YEAR, dayOffset)
@@ -82,7 +83,7 @@ object ScreenTimeHelper {
             e.printStackTrace()
         }
 
-        return totalScreenOn
+        totalScreenOn
     }
 
     fun formatMillis(millis: Long): String {

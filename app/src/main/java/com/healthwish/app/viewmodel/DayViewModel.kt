@@ -28,19 +28,25 @@ class DayViewModel : ViewModel() {
         viewModelScope.launch {
             val yday = DayRepository.yesterdayKey()
             // Load initial
-            DayRepository.loadDay("Tkku", today)?.let { _tkkuLog.value = it }
-            DayRepository.loadDay("Shumu", today)?.let { _shumuLog.value = it }
+            val initialTkku = DayRepository.loadDay("Tkku", today)
+            if (initialTkku != null) _tkkuLog.value = initialTkku
+            val initialShumu = DayRepository.loadDay("Shumu", today)
+            if (initialShumu != null) _shumuLog.value = initialShumu
             DayRepository.loadDay("Tkku", yday)?.let { _tkkuYesterday.value = it }
             DayRepository.loadDay("Shumu", yday)?.let { _shumuYesterday.value = it }
 
             // Real-time live listener for Tkku
             DayRepository.listenDay("Tkku", today) { log ->
-                if (log != null) _tkkuLog.value = log
+                if (log != null) {
+                    _tkkuLog.value = log
+                }
             }
 
             // Real-time live listener for Shumu
             DayRepository.listenDay("Shumu", today) { log ->
-                if (log != null) _shumuLog.value = log
+                if (log != null) {
+                    _shumuLog.value = log
+                }
             }
         }
     }
@@ -86,8 +92,12 @@ class DayViewModel : ViewModel() {
         l.copy(waterGlasses = n)
     }
 
-    fun syncScreenTime(profile: String, screenTimeFormatted: String) = updateProfile(profile) { l ->
-        l.copy(screenOnTime = screenTimeFormatted)
+    fun syncScreenTime(profile: String, screenTimeFormatted: String) {
+        if (screenTimeFormatted.isBlank()) return
+        val currentLog = if (profile.equals("Tkku", ignoreCase = true)) _tkkuLog.value else _shumuLog.value
+        if (currentLog.screenOnTime != screenTimeFormatted) {
+            updateProfile(profile) { l -> l.copy(screenOnTime = screenTimeFormatted) }
+        }
     }
 
     // Auto checks and backfills yesterday's final screen time if missing
