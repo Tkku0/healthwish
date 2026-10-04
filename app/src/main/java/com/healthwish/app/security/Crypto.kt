@@ -51,3 +51,35 @@ object Crypto {
         }
     }
 }
+
+// READ-ONLY legacy decrypt: purani encryption-build ke ENC1: ciphertext ko wapas padhne ke liye.
+// Naya data hamesha plaintext save hota hai — enc() जानबूझकर nahi hai taaki naya ciphertext kabhi na bane.
+object FieldCrypto {
+    const val PREFIX = "ENC1:"
+    private const val ITER = 65000
+    private const val KEYLEN = 256
+
+    fun saltFor(coupleId: String) =
+        ("healthwish:$coupleId:field-v1").toByteArray(Charsets.UTF_8)
+
+    private fun key(password: String, salt: ByteArray) =
+        SecretKeySpec(
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(PBEKeySpec(password.toCharArray(), salt, ITER, KEYLEN)).encoded,
+            "AES"
+        )
+
+    fun dec(cipher: String, password: String, salt: ByteArray): String {
+        if (cipher.isEmpty() || !cipher.startsWith(PREFIX)) return cipher
+        return try {
+            val all = android.util.Base64.decode(cipher.removePrefix(PREFIX), android.util.Base64.NO_WRAP)
+            val iv = all.copyOfRange(0, 12)
+            val data = all.copyOfRange(12, all.size)
+            val c = Cipher.getInstance("AES/GCM/NoPadding")
+            c.init(Cipher.DECRYPT_MODE, key(password, salt), GCMParameterSpec(128, iv))
+            String(c.doFinal(data), Charsets.UTF_8)
+        } catch (e: Exception) {
+            cipher
+        }
+    }
+}

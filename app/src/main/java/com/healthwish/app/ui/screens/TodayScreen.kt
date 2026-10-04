@@ -4,8 +4,6 @@ import android.app.TimePickerDialog
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,8 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -82,34 +78,17 @@ fun TodayScreen(vm: DayViewModel) {
     val activeLog = if (selectedProfile == "Tkku") tkkuLog else shumuLog
     val ydayLog = if (selectedProfile == "Tkku") tkkuYday else shumuYday
 
-    // Month data → battle scoreboard, streak, weekly summary, weight chart
+    // Month data → weekly summary + last weight lookup (bounded query, cheap)
     val monthTkku by vm.monthTkku.collectAsState()
     val monthShumu by vm.monthShumu.collectAsState()
-    val todayKey = remember { DayRepository.todayKey() }
     val weekStart = remember { DayRepository.weekStartKey() }
-    val monthName = remember(todayKey) {
-        try {
-            java.time.Month.of(todayKey.substring(5, 7).toInt()).name.lowercase()
-                .replaceFirstChar { it.uppercase() }
-        } catch (e: Exception) { "" }
-    }
-    val tkkuAvg = remember(monthTkku) {
-        if (monthTkku.isEmpty()) 0 else monthTkku.map { ScoreHelper.dailyScore(it) }.average().toInt()
-    }
-    val shumuAvg = remember(monthShumu) {
-        if (monthShumu.isEmpty()) 0 else monthShumu.map { ScoreHelper.dailyScore(it) }.average().toInt()
-    }
     val activeMonth = if (selectedProfile == "Tkku") monthTkku else monthShumu
-    val todayScore = remember(activeLog) { ScoreHelper.dailyScore(activeLog) }
-    val streak = remember(activeMonth) {
-        ScoreHelper.streakDays(activeMonth.associateBy { it.dateKey }, todayKey)
-    }
     val weekly = remember(activeMonth, weekStart) {
         ScoreHelper.weekly(activeMonth.filter { it.dateKey >= weekStart })
     }
-    val weightPts = remember(activeMonth) {
-        activeMonth.filter { it.weightKg > 0 }.sortedBy { it.dateKey }.takeLast(30)
-            .map { it.dateKey to it.weightKg }
+    // Sabse recent logged weight (aaj ya pichhle dino se)
+    val lastWeight = remember(activeMonth, activeLog) {
+        (activeMonth + activeLog).filter { it.weightKg > 0 }.maxByOrNull { it.dateKey }
     }
 
     // FIXED SLEEP LOGIC: Only calculate if yesterday actually has a sleep time logged!
@@ -186,18 +165,6 @@ fun TodayScreen(vm: DayViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 90.dp)
     ) {
-        // 0. HEADER: Month Battle + today ring + streak
-        item(key = "battle_header") {
-            BattleHeaderCard(
-                monthName = monthName,
-                todayScore = todayScore,
-                streak = streak,
-                tkkuAvg = tkkuAvg,
-                shumuAvg = shumuAvg,
-                hasData = monthTkku.isNotEmpty() || monthShumu.isNotEmpty()
-            )
-        }
-
         // 1. Tkku & Shumu Selector
         item(key = "profile_selector") {
             SingleChoiceSegmentedButtonRow(
@@ -233,6 +200,89 @@ fun TodayScreen(vm: DayViewModel) {
                         fontSize = 14.sp
                     )
                 }
+            }
+        }
+
+        // 1b. Slim weight row (15 din me ek baar update kaafi)
+        item(key = "weight_row") {
+            var showWeightDlg by remember { mutableStateOf(false) }
+            ModernCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⚖️", fontSize = 22.sp)
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Weight", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(
+                            if (lastWeight != null) {
+                                "${"%.1f".format(lastWeight.weightKg)} kg • ${lastWeight.dateKey}"
+                            } else {
+                                "Not logged yet"
+                            },
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                    TextButton(onClick = { showWeightDlg = true }) {
+                        Text(
+                            if (lastWeight != null) "Update" else "Add",
+                            fontWeight = FontWeight.Bold,
+                            color = AccentGreen
+                        )
+                    }
+                }
+                Text(
+                    "15 din me ek baar update kaafi hai 🙂",
+                    color = TextMuted,
+                    fontSize = 11.sp
+                )
+            }
+            if (showWeightDlg) {
+                var weightInput by remember(lastWeight?.weightKg) {
+                    mutableStateOf(
+                        if ((lastWeight?.weightKg ?: 0f) > 0) "%.1f".format(lastWeight!!.weightKg) else ""
+                    )
+                }
+                AlertDialog(
+                    onDismissRequest = { showWeightDlg = false },
+                    title = { Text("Weight update karo ⚖️", fontWeight = FontWeight.Bold) },
+                    text = {
+                        OutlinedTextField(
+                            value = weightInput,
+                            onValueChange = { weightInput = it.filter { c -> c.isDigit() || c == '.' } },
+                            label = { Text("Weight in kg (e.g. 62.5)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                            )
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val kg = weightInput.toFloatOrNull()
+                                if (kg != null && kg in 20f..300f) {
+                                    vm.setWeight(selectedProfile, kg)
+                                    showWeightDlg = false
+                                    Toast.makeText(ctx, "Weight saved: ${"%.1f".format(kg)} kg 💜", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(ctx, "Sahi weight likho (20-300 kg)", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                        ) {
+                            Text("Save", color = Color(0xFF101018), fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showWeightDlg = false }) { Text("Cancel") }
+                    },
+                    containerColor = Color(0xFF161622)
+                )
             }
         }
 
@@ -537,15 +587,6 @@ fun TodayScreen(vm: DayViewModel) {
             )
         }
 
-        // 6b. Weight Tracker + chart
-        item(key = "weight_card") {
-            WeightCard(
-                weight = activeLog.weightKg,
-                history = weightPts,
-                onSet = { vm.setWeight(selectedProfile, it) }
-            )
-        }
-
         // 7. SYSTEMATIC STEP 4: Night Day Completion & Mood (Sabse aakhir me)
         item(key = "reflection_card") {
             var noteText by remember(activeLog.dayNote) { mutableStateOf(activeLog.dayNote) }
@@ -655,183 +696,6 @@ fun TodayScreen(vm: DayViewModel) {
                     Text("Save & Sync 💜", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun BattleHeaderCard(
-    monthName: String,
-    todayScore: Int,
-    streak: Int,
-    tkkuAvg: Int,
-    shumuAvg: Int,
-    hasData: Boolean
-) {
-    val ring by animateFloatAsState(targetValue = todayScore / 100f, label = "ring")
-    ModernCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Box(
-                modifier = Modifier.size(76.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    progress = { ring },
-                    modifier = Modifier.fillMaxSize(),
-                    strokeWidth = 8.dp,
-                    color = AccentPink,
-                    trackColor = Color(0xFF262638)
-                )
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("$todayScore", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("today", color = TextMuted, fontSize = 10.sp)
-                }
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        if (monthName.isNotBlank()) "$monthName Battle 🏆" else "Month Battle 🏆",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Text("🔥 $streak", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = AccentPink)
-                }
-                if (!hasData) {
-                    Text("Log karo, battle shuru hogi 💪", color = TextMuted, fontSize = 13.sp)
-                } else {
-                    ScoreBar(
-                        name = "🌸 Tkku",
-                        score = tkkuAvg,
-                        color = AccentPink,
-                        max = maxOf(tkkuAvg, shumuAvg, 1),
-                        crown = tkkuAvg >= shumuAvg
-                    )
-                    ScoreBar(
-                        name = "💙 Shumu",
-                        score = shumuAvg,
-                        color = AccentPurple,
-                        max = maxOf(tkkuAvg, shumuAvg, 1),
-                        crown = shumuAvg > tkkuAvg
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ScoreBar(name: String, score: Int, color: Color, max: Int, crown: Boolean) {
-    val p by animateFloatAsState(
-        targetValue = if (max <= 0) 0f else (score / max.toFloat()).coerceIn(0f, 1f),
-        label = "bar"
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Text(
-                if (crown) "$score 👑" else "$score",
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                color = color
-            )
-        }
-        LinearProgressIndicator(
-            progress = { p },
-            modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)),
-            color = color,
-            trackColor = Color(0xFF262638)
-        )
-    }
-}
-
-@Composable
-private fun WeightCard(
-    weight: Float,
-    history: List<Pair<String, Float>>,
-    onSet: (Float) -> Unit
-) {
-    SectionHeader(
-        title = "Weight ⚖️",
-        subtitle = if (weight > 0) "Today: ${"%.1f".format(weight)} kg" else "Aaj ka weight log karo"
-    )
-    ModernCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FilledIconButton(
-                onClick = { onSet((if (weight <= 0) 60f else weight) - 0.5f) },
-                modifier = Modifier.size(40.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFF262638))
-            ) {
-                Icon(Icons.Default.Remove, null, tint = Color.White)
-            }
-            Text(
-                if (weight > 0) "${"%.1f".format(weight)} kg" else "-- kg",
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                color = AccentGreen
-            )
-            FilledIconButton(
-                onClick = { onSet((if (weight <= 0) 60f else weight) + 0.5f) },
-                modifier = Modifier.size(40.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = AccentGreen)
-            ) {
-                Icon(Icons.Default.Add, null, tint = Color(0xFF101018))
-            }
-        }
-        if (history.size >= 2) {
-            WeightChart(history)
-            Text(
-                "Last ${history.size} entries • min ${"%.1f".format(history.minOf { it.second })} / max ${"%.1f".format(history.maxOf { it.second })} kg",
-                color = TextMuted,
-                fontSize = 12.sp
-            )
-        } else {
-            Text("Roz weight log karo, yahan trend banega 📈", color = TextMuted, fontSize = 13.sp)
-        }
-    }
-}
-
-@Composable
-private fun WeightChart(pts: List<Pair<String, Float>>) {
-    Canvas(
-        modifier = Modifier.fillMaxWidth().height(110.dp)
-    ) {
-        val min = pts.minOf { it.second }
-        val max = pts.maxOf { it.second }
-        val span = (max - min).coerceAtLeast(1f)
-        val pad = 12.dp.toPx()
-        val w = size.width - pad * 2
-        val h = size.height - pad * 2
-        val stepX = if (pts.size > 1) w / (pts.size - 1) else 0f
-        val path = Path()
-        pts.forEachIndexed { i, (_, v) ->
-            val x = pad + i * stepX
-            val y = pad + h - ((v - min) / span) * h
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        drawPath(path, color = AccentGreen, style = Stroke(width = 3.dp.toPx()))
-        pts.forEachIndexed { i, (_, v) ->
-            val x = pad + i * stepX
-            val y = pad + h - ((v - min) / span) * h
-            drawCircle(color = AccentGreen, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(x, y))
         }
     }
 }

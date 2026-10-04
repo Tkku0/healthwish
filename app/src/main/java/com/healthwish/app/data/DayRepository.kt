@@ -1,9 +1,11 @@
 package com.healthwish.app.data
 
+import android.content.Context
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
 import com.healthwish.app.model.DayLog
+import com.healthwish.app.security.FieldCrypto
 import kotlinx.coroutines.tasks.await
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -11,6 +13,64 @@ import java.time.format.DateTimeFormatter
 object DayRepository {
     private val db get() = FirebaseFirestore.getInstance()
     private const val COUPLE_ID = "LOVE1"
+
+    @Volatile private var appCtx: Context? = null
+    fun init(ctx: Context) {
+        appCtx = ctx.applicationContext
+    }
+
+    // Purani encryption-build ka password (agar is phone me set hua tha) — sirf purana data recover karne ke liye
+    private fun legacyPass(): String? = try {
+        val c = appCtx ?: return null
+        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+            c, "healthwish_privacy",
+            androidx.security.crypto.MasterKey.Builder(c)
+                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        prefs.getString("sync_password", null)?.ifBlank { null }
+    } catch (e: Exception) {
+        null
+    }
+
+    // ENC1: ciphertext ko readable banao: password ho to decrypt, nahi to blank (code kabhi mat dikhao).
+    // Naye saves hamesha plaintext hote hain, isliye purana kachra dheere-dheere khud saaf ho jayega.
+    private fun cleanLog(log: DayLog): DayLog {
+        if (!hasLegacyCipher(log)) return log
+        val pw = legacyPass()
+        val salt = FieldCrypto.saltFor(COUPLE_ID)
+        fun fix(v: String): String {
+            if (!v.startsWith(FieldCrypto.PREFIX)) return v
+            if (pw == null) return ""
+            val p = FieldCrypto.dec(v, pw, salt)
+            return if (p.startsWith(FieldCrypto.PREFIX)) "" else p
+        }
+        return log.copy(
+            breakfast = fix(log.breakfast),
+            lunch = fix(log.lunch),
+            dinner = fix(log.dinner),
+            snacks = fix(log.snacks),
+            wakeupTime = fix(log.wakeupTime),
+            sleepTime = fix(log.sleepTime),
+            sleepMood = fix(log.sleepMood),
+            dayMood = fix(log.dayMood),
+            dayNote = fix(log.dayNote),
+            screenOnTime = fix(log.screenOnTime),
+            tasks = log.tasks.map { t ->
+                t.copy(title = fix(t.title), emoji = fix(t.emoji), time = fix(t.time))
+            }
+        )
+    }
+
+    private fun hasLegacyCipher(log: DayLog): Boolean {
+        fun isEnc(v: String) = v.startsWith(FieldCrypto.PREFIX)
+        return isEnc(log.breakfast) || isEnc(log.lunch) || isEnc(log.dinner) ||
+            isEnc(log.snacks) || isEnc(log.wakeupTime) || isEnc(log.sleepTime) ||
+            isEnc(log.sleepMood) || isEnc(log.dayMood) || isEnc(log.dayNote) ||
+            isEnc(log.screenOnTime) ||
+            log.tasks.any { isEnc(it.title) || isEnc(it.emoji) || isEnc(it.time) }
+    }
 
     fun todayKey() = LocalDate.now().format(DateTimeFormatter.ISO_DATE)
     fun yesterdayKey() = LocalDate.now().minusDays(1).format(DateTimeFormatter.ISO_DATE)
@@ -20,7 +80,7 @@ object DayRepository {
         return try {
             val snap = db.collection("couples").document(COUPLE_ID)
                 .collection("days").document(docId(dateKey, profile)).get().await()
-            snap.toObject(DayLog::class.java)
+            snap.toObject(DayLog::class.java)?.let { cleanLog(it) }
         } catch (e: Exception) {
             null
         }
@@ -67,7 +127,7 @@ object DayRepository {
                 if (e != null) {
                     return@addSnapshotListener
                 }
-                onChange(s?.toObject(DayLog::class.java))
+                onChange(s?.toObject(DayLog::class.java)?.let { cleanLog(it) })
             }
     }
 
@@ -79,7 +139,7 @@ object DayRepository {
                 .collection("days")
                 .whereGreaterThanOrEqualTo("dateKey", fromDateKey)
                 .get().await()
-            snap.toObjects(DayLog::class.java)
+            snap.toObjects(DayLog::class.java).map { cleanLog(it) }
                 .filter { it.ownerName.equals(profile, ignoreCase = true) || it.id.endsWith(profile.lowercase()) }
                 .sortedByDescending { it.dateKey }
                 .take(limit)
