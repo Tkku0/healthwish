@@ -118,6 +118,7 @@ fun HistoryScreen() {
                     if (log.wakeupTime.isNotBlank() || log.sleepMood.isNotBlank()) {
                         Text("😴 Wake: ${log.wakeupTime} | Sleep: ${log.sleepTime} | Mood: ${log.sleepMood}", fontSize = 14.sp)
                     }
+                    if (log.screenOnTime.isNotBlank()) Text("📱 Screen On Time: ${log.screenOnTime}", color = AccentPurple, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     if (log.breakfast.isNotBlank()) Text("🌅 Breakfast: ${log.breakfast}", fontSize = 13.sp)
                     if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
                     if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
@@ -150,6 +151,7 @@ fun HistoryScreen() {
                             }
                         }
                         if (log.wakeupTime.isNotBlank()) Text("😴 Wake: ${log.wakeupTime} | Sleep: ${log.sleepTime}", fontSize = 13.sp)
+                        if (log.screenOnTime.isNotBlank()) Text("📱 Screen Time: ${log.screenOnTime}", color = AccentPurple, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         if (log.breakfast.isNotBlank()) Text("🌅 Breakfast: ${log.breakfast}", fontSize = 13.sp)
                         if (log.lunch.isNotBlank()) Text("🌞 Lunch: ${log.lunch}", fontSize = 13.sp)
                         if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
