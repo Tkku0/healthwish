@@ -19,26 +19,36 @@ object DayRepository {
         appCtx = ctx.applicationContext
     }
 
-    // Purani encryption-build ka password (agar is phone me set hua tha) — sirf purana data recover karne ke liye
-    private fun legacyPass(): String? = try {
-        val c = appCtx ?: return null
-        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
-            c, "healthwish_privacy",
-            androidx.security.crypto.MasterKey.Builder(c)
-                .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
-            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-        prefs.getString("sync_password", null)?.ifBlank { null }
-    } catch (e: Exception) {
-        null
+    // Purani encryption-build ka password (agar is phone me set hua tha) — sirf purana data recover karne ke liye.
+    // Ek baar padh ke cache kar lo (har read par Keystore IO nahi).
+    @Volatile private var legacyPassLoaded = false
+    @Volatile private var legacyPassCached: String? = null
+    private fun legacyPass(): String? {
+        if (legacyPassLoaded) return legacyPassCached
+        legacyPassCached = try {
+            val c = appCtx ?: return null
+            val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+                c, "healthwish_privacy",
+                androidx.security.crypto.MasterKey.Builder(c)
+                    .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+                androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            prefs.getString("sync_password", null)?.ifBlank { null }
+        } catch (e: Exception) {
+            null
+        }
+        legacyPassLoaded = true
+        return legacyPassCached
     }
 
     // ENC1: ciphertext ko readable banao: password ho to decrypt, nahi to blank (code kabhi mat dikhao).
     // Naye saves hamesha plaintext hote hain, isliye purana kachra dheere-dheere khud saaf ho jayega.
+    // Default tasks ke naam/emoji fixed hain — unhe hamesha restore karo; unrecoverable custom tasks hatao.
     private fun cleanLog(log: DayLog): DayLog {
-        if (!hasLegacyCipher(log)) return log
-        val pw = legacyPass()
+        val defaults = DayLog.defaultTasks().associateBy { it.id }
+        var changed = hasLegacyCipher(log)
+        val pw = if (changed) legacyPass() else null
         val salt = FieldCrypto.saltFor(COUPLE_ID)
         fun fix(v: String): String {
             if (!v.startsWith(FieldCrypto.PREFIX)) return v
@@ -46,6 +56,26 @@ object DayRepository {
             val p = FieldCrypto.dec(v, pw, salt)
             return if (p.startsWith(FieldCrypto.PREFIX)) "" else p
         }
+        val tasks = log.tasks.mapNotNull { t ->
+            val d = defaults[t.id]
+            if (d != null && (t.title.isBlank() || t.title.startsWith(FieldCrypto.PREFIX))) {
+                changed = true
+                t.copy(title = d.title, emoji = d.emoji, time = d.time)
+            } else if (t.id.startsWith("c_") && t.title.isBlank()) {
+                changed = true
+                null // unrecoverable custom task — blank row mat dikhao
+            } else {
+                val nt = t.title
+                val ne = t.emoji
+                val nm = t.time
+                val ft = fix(nt)
+                val fe = fix(ne)
+                val fm = fix(nm)
+                if (ft != nt || fe != ne || fm != nm) changed = true
+                t.copy(title = ft, emoji = fe, time = fm)
+            }
+        }
+        if (!changed) return log
         return log.copy(
             breakfast = fix(log.breakfast),
             lunch = fix(log.lunch),
@@ -57,9 +87,7 @@ object DayRepository {
             dayMood = fix(log.dayMood),
             dayNote = fix(log.dayNote),
             screenOnTime = fix(log.screenOnTime),
-            tasks = log.tasks.map { t ->
-                t.copy(title = fix(t.title), emoji = fix(t.emoji), time = fix(t.time))
-            }
+            tasks = tasks
         )
     }
 
