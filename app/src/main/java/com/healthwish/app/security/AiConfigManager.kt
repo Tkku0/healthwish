@@ -19,14 +19,28 @@ object AiConfigManager {
     private const val KEY_MODEL = "model"
     private const val KEY_PROMPT = "custom_prompt"
 
-    // Default nutrition rules — Settings > AI Prompt se edit ho sakta hai
+    // Built-in shared defaults — GF ko kuch setup nahi karna padega.
+    // NOTE: ye key APK/repo me rahegi; decompile se nikal sakti hai. Abuse lage to Groq se revoke karo.
+    private const val BUILTIN_BASE = "https://api.groq.com/openai/v1"
+    private const val BUILTIN_MODEL = "openai/gpt-oss-120b"
+    private const val BUILTIN_KEY = "***REVOKED***"
+
+    // Default nutrition rules (user-tuned prompt) — Settings > AI Prompt se edit ho sakta hai.
+    // IMPORTANT: output hamesha sirf JSON hona chahiye taaki app auto-fill kar sake.
     const val DEFAULT_RULES =
-        "Use these standard home-style portions (average oil): " +
-            "1 roti (30g atta)=100; 1 katori cooked dal (150g)=150; 1 katori cooked rice (150g)=200; " +
-            "1 katori sabzi=130; 1 tsp oil/ghee=45; 1 glass milk (250ml)=150; 1 boiled egg=70; " +
-            "100g chicken curry=180; 100g paneer curry=250; 1 samosa=250; 1 cup chai (milk+sugar)=70; " +
-            "1 banana=105; 1 apple=95; 100g curd=65; 1 thali (2 roti+dal+rice+sabzi)=550. " +
-            "If quantity unclear, assume 1 standard serving. Always reply an integer."
+        "You are an Indian Food & Nutrition Logging AI. Interpret every food the Indian way " +
+            "(roti/paratha/rice/dal/rajma/chole/sabzi/aloo/paneer/curd/poha/upma/idli/dosa/sambar/chutney/samosa/pakora/biryani/pulao/chicken curry/egg curry/chai/milk/lassi/fruits/dry fruits/mithai). " +
+            "Understand quantities: roti count, katori (a small Indian bowl, ~150-180ml — never a Western cup), bowl, plate, glass, cup, spoon, handful, piece, thali. " +
+            "Account for Indian cooking: oil/ghee/butter/cream/sugar/tadka/gravy/frying — e.g. aloo sabzi is NOT plain boiled potato. " +
+            "Assume a medium homemade wheat roti unless stated (never restaurant naan). " +
+            "For biryani/thali/restaurant food estimate the complete serving incl. rice, oil/ghee and gravy; scale up if unusually large. " +
+            "Split dry fruits by type (almond/cashew/walnut/raisin/pista/dates) — missing qty means one Indian handful. " +
+            "Split mixed meals into components and total them (e.g. 3 roti + 1 katori aloo sabzi; biryani rice part + chicken pieces separately). " +
+            "Calories are estimates, never exact. Don't ask questions unless missing info changes the result a lot. " +
+            "Understand Hindi/Hinglish/English ('2 roti aur dal', 'ek katori aloo ki sabji', 'subah chai biscuit'). " +
+            "Keep a balanced, non-restrictive tone. " +
+            "CRITICAL OUTPUT RULE: your entire reply must be ONLY the single JSON object asked for in the system message — " +
+            "no headings, no emojis, no ranges, no extra text. The app parses it automatically."
 
     // Gemini ka OpenAI-compatible endpoint — AI Studio key seedha chalti hai
     val PRESETS: Map<String, Pair<String, String>> = linkedMapOf(
@@ -48,13 +62,22 @@ object AiConfigManager {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    // Saved values win; jo khaali ho wahan built-in default lagta hai (zero-setup for family).
     fun get(ctx: Context): AiConfig {
         val p = prefs(ctx)
+        val base = (p.getString(KEY_BASE, "") ?: "").trim().trimEnd('/')
+        val key = (p.getString(KEY_KEY, "") ?: "").trim()
+        val model = (p.getString(KEY_MODEL, "") ?: "").trim()
         return AiConfig(
-            baseUrl = (p.getString(KEY_BASE, "") ?: "").trim().trimEnd('/'),
-            apiKey = (p.getString(KEY_KEY, "") ?: "").trim(),
-            model = (p.getString(KEY_MODEL, "") ?: "").trim()
+            baseUrl = if (base.isBlank()) BUILTIN_BASE else base,
+            apiKey = if (key.isBlank()) BUILTIN_KEY else key,
+            model = if (model.isBlank()) BUILTIN_MODEL else model
         )
+    }
+
+    // true = apni key dali hui hai; false = built-in shared key chal rahi hai
+    fun isUsingCustomKey(ctx: Context): Boolean {
+        return !((prefs(ctx).getString(KEY_KEY, "") ?: "").trim().isBlank())
     }
 
     fun save(ctx: Context, cfg: AiConfig) {

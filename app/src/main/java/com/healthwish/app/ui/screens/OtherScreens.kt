@@ -207,24 +207,25 @@ fun SettingsScreen(onLogout: () -> Unit) {
     var pinText by remember { mutableStateOf("") }
     var backupPass by remember { mutableStateOf("") }
     var exporting by remember { mutableStateOf(false) }
-    // AI Setup state
+    // AI Setup state (khali key = built-in shared Groq key)
     val aiPresets = remember { AiConfigManager.PRESETS.keys.toList() }
-    var aiPreset by remember { mutableStateOf("Gemini (Google AI Studio)") }
-    var aiBase by remember { mutableStateOf(AiConfigManager.PRESETS["Gemini (Google AI Studio)"]!!.first) }
+    var aiPreset by remember { mutableStateOf("Groq") }
+    var aiBase by remember { mutableStateOf(AiConfigManager.PRESETS["Groq"]!!.first) }
     var aiKey by remember { mutableStateOf("") }
-    var aiModel by remember { mutableStateOf(AiConfigManager.PRESETS["Gemini (Google AI Studio)"]!!.second) }
+    var aiModel by remember { mutableStateOf(AiConfigManager.PRESETS["Groq"]!!.second) }
     var aiDrop by remember { mutableStateOf(false) }
     var aiTesting by remember { mutableStateOf(false) }
     var aiStatus by remember { mutableStateOf<String?>(null) }
     var calTargetText by remember { mutableStateOf(PreferenceHelper.getCalorieTarget(ctx).toString()) }
     LaunchedEffect(Unit) {
         val saved = AiConfigManager.get(ctx)
-        if (saved.baseUrl.isNotBlank()) aiBase = saved.baseUrl
-        if (saved.model.isNotBlank()) aiModel = saved.model
-        if (saved.apiKey.isNotBlank()) aiKey = "••••••••"
+        aiBase = saved.baseUrl
+        aiModel = saved.model
+        aiKey = if (AiConfigManager.isUsingCustomKey(ctx)) "••••••••" else ""
         val match = AiConfigManager.PRESETS.entries.find { it.value.first == saved.baseUrl }?.key
         if (match != null) aiPreset = match
-        aiStatus = if (AiConfigManager.isConfigured(ctx)) "AI connected ✓ (${aiModel.ifBlank { saved.model }})" else null
+        aiStatus = if (AiConfigManager.isUsingCustomKey(ctx)) "Custom key active ✓"
+        else "Built-in shared key active ✓ (kuch dalne ki zaroorat nahi)"
     }
 
     LazyColumn(
@@ -282,14 +283,14 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item(key = "ai_setup") {
             SectionHeader(
                 title = "AI Assistant ✨",
-                subtitle = "Apni API key + model — calorie auto-count"
+                subtitle = "Built-in ready — custom key/model optional"
             )
             ModernCard {
                 if (aiStatus != null) {
                     Text(aiStatus!!, color = AccentGreen, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
                 Text(
-                    "Key sirf is phone me rehti hai, kahin upload nahi hoti. Gemini key: aistudio.google.com se free me lo.",
+                    "Built-in shared key se bina setup ke chalega. Apni key dalna ho to neeche bharo — wo sirf is phone me rehti hai, kahin upload nahi hoti. Gemini key: aistudio.google.com se free me lo.",
                     color = TextMuted,
                     fontSize = 12.sp
                 )
@@ -336,7 +337,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
                 OutlinedTextField(
                     value = aiKey,
                     onValueChange = { aiKey = it },
-                    label = { Text("API Key (paste karo)") },
+                    label = { Text("API Key (khaali = built-in shared key)") },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true,
@@ -356,17 +357,19 @@ fun SettingsScreen(onLogout: () -> Unit) {
                 ) {
                     Button(
                         onClick = {
-                            if (aiBase.isBlank() || aiKey.isBlank() || aiModel.isBlank()) {
-                                Toast.makeText(ctx, " teeno fields bharo 🙂", Toast.LENGTH_SHORT).show()
+                            if (aiBase.isBlank() || aiModel.isBlank()) {
+                                Toast.makeText(ctx, "Base URL + Model bharo 🙂", Toast.LENGTH_SHORT).show()
                             } else {
-                                // "••••" dikhe to purani saved key reuse karo
-                                val keyToSave = if (aiKey.all { it == '•' }) {
+                                // "••••" dikhe to purani saved custom key reuse karo; khaali = built-in shared key
+                                val typed = aiKey.trim()
+                                val keyToSave = if (typed.isNotBlank() && typed.all { it == '•' }) {
                                     AiConfigManager.get(ctx).apiKey
                                 } else {
-                                    aiKey.trim()
+                                    typed
                                 }
                                 AiConfigManager.save(ctx, AiConfig(aiBase.trim(), keyToSave, aiModel.trim()))
-                                aiStatus = "AI saved ✓ — Test dabake check karo"
+                                aiStatus = if (AiConfigManager.isUsingCustomKey(ctx)) "Custom key saved ✓"
+                                else "Built-in shared key active ✓"
                                 Toast.makeText(ctx, "AI Setup saved 🔑", Toast.LENGTH_SHORT).show()
                             }
                         },
@@ -407,13 +410,16 @@ fun SettingsScreen(onLogout: () -> Unit) {
                     onClick = {
                         AiConfigManager.clear(ctx)
                         aiKey = ""
-                        aiStatus = null
-                        Toast.makeText(ctx, "AI Removed — manual mode", Toast.LENGTH_SHORT).show()
+                        aiBase = AiConfigManager.PRESETS["Groq"]!!.first
+                        aiModel = AiConfigManager.PRESETS["Groq"]!!.second
+                        aiPreset = "Groq"
+                        aiStatus = "Built-in shared key active ✓ (kuch dalne ki zaroorat nahi)"
+                        Toast.makeText(ctx, "Built-in key wapas ✓", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Remove AI Key")
+                    Text("Back to Built-in Key")
                 }
                 OutlinedTextField(
                     value = calTargetText,
