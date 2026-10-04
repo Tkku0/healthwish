@@ -46,7 +46,7 @@ object AntigravityAuth {
 
     const val DEF_API_BASE = "https://cloudcode-pa.googleapis.com"
     const val DEF_API_VER = "v1internal"
-    const val DEF_MODEL = "gemini-2.5-pro"
+    const val DEF_MODEL = "gemini-3-flash"
     const val DEF_UA = "HealthWish-Antigravity/1.0"
 
     data class Adv(
