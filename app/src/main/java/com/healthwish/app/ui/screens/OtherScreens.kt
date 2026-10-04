@@ -22,7 +22,6 @@ import com.healthwish.app.backup.ExportHelper
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
 import com.healthwish.app.security.AppLockManager
-import com.healthwish.app.security.PrivacyManager
 import com.healthwish.app.ui.components.*
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -35,18 +34,19 @@ fun HistoryScreen() {
     var loading by remember { mutableStateOf(true) }
     var specificDateLog by remember { mutableStateOf<DayLog?>(null) }
     var selectedDateText by remember { mutableStateOf<String?>(null) }
+    var shownCount by remember { mutableStateOf(30) }
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
 
     fun loadData() {
         scope.launch {
             loading = true
-            logs = DayRepository.loadRange(selectedProfile, days = 60)
+            logs = DayRepository.loadRange(selectedProfile, days = shownCount)
             loading = false
         }
     }
 
-    LaunchedEffect(selectedProfile) {
+    LaunchedEffect(selectedProfile, shownCount) {
         selectedDateText = null
         specificDateLog = null
         loadData()
@@ -125,6 +125,7 @@ fun HistoryScreen() {
                     if (log.dinner.isNotBlank()) Text("🌙 Dinner: ${log.dinner}", fontSize = 13.sp)
                     if (log.snacks.isNotBlank()) Text("🍿 Snacks: ${log.snacks}", fontSize = 13.sp)
                     Text("💧 Water: ${log.waterGlasses} glasses | Tasks: ${log.tasks.count { it.done }}/${log.tasks.size}", color = TextMuted, fontSize = 12.sp)
+                    if (log.weightKg > 0) Text("⚖️ Weight: ${"%.1f".format(log.weightKg)} kg", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     if (log.dayNote.isNotBlank()) Text("💌 Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
                 }
             }
@@ -161,6 +162,18 @@ fun HistoryScreen() {
                         if (log.dayNote.isNotBlank()) {
                             Text("Note: \"${log.dayNote}\"", color = Color(0xFFFFD6A5), fontSize = 13.sp)
                         }
+                        if (log.weightKg > 0) {
+                            Text("⚖️ Weight: ${"%.1f".format(log.weightKg)} kg", color = AccentGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                item(key = "load_more") {
+                    OutlinedButton(
+                        onClick = { shownCount += 30 },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Load older days ⬇️ ($shownCount shown)")
                     }
                 }
             }
@@ -174,8 +187,6 @@ fun SettingsScreen(onLogout: () -> Unit) {
     val scope = rememberCoroutineScope()
     var isLockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(ctx)) }
     var isFingerprintOn by remember { mutableStateOf(AppLockManager.isBiometricEnabled(ctx)) }
-    var privacyOn by remember { mutableStateOf(PrivacyManager.hasPassword(ctx)) }
-    var privacyPass by remember { mutableStateOf("") }
     var pinText by remember { mutableStateOf("") }
     var backupPass by remember { mutableStateOf("") }
     var exporting by remember { mutableStateOf(false) }
@@ -226,71 +237,6 @@ fun SettingsScreen(onLogout: () -> Unit) {
                         Icon(Icons.Rounded.Share, null)
                         Spacer(Modifier.width(8.dp))
                         Text("Export & Share CSV", fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        // Private Sync (Firebase field encryption)
-        item(key = "privacy_card") {
-            SectionHeader(
-                title = "Private Sync 🔐",
-                subtitle = "Firebase par diet AES-256 se encrypted jayegi"
-            )
-            ModernCard {
-                Text(
-                    if (privacyOn) "Status: ON — naya data encrypted sync ho raha hai"
-                    else "Status: OFF — data plaintext sync ho raha hai",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    color = if (privacyOn) AccentGreen else TextMuted
-                )
-                Text(
-                    "Dono phone me SAME couple-password dalo. Password bhoolne par purana encrypted data wapas nahi aayega. Purana plaintext data readable hi rahega jab tak dobara save na ho.",
-                    color = TextMuted,
-                    fontSize = 12.sp
-                )
-                OutlinedTextField(
-                    value = privacyPass,
-                    onValueChange = { privacyPass = it },
-                    label = { Text("Couple sync-password (min 6 chars)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    singleLine = true
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            if (privacyPass.trim().length >= 6) {
-                                PrivacyManager.setPassword(ctx, privacyPass.trim())
-                                privacyOn = true
-                                privacyPass = ""
-                                Toast.makeText(ctx, "Private Sync ON 🔐 — GF ke phone me bhi SAME password dalo", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(ctx, "Min 6 characters likho", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-                    ) {
-                        Text("Enable / Update", color = Color(0xFF101018), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            PrivacyManager.clearPassword(ctx)
-                            privacyOn = false
-                            privacyPass = ""
-                            Toast.makeText(ctx, "Private Sync OFF — aage ka data plaintext jayega", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Turn OFF", fontSize = 13.sp)
                     }
                 }
             }

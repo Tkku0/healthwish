@@ -10,12 +10,12 @@ import java.io.File
 object ExportHelper {
     fun exportCsv(ctx: Context, logs: List<DayLog>): File {
         val sb = StringBuilder()
-        sb.appendLine("date,owner,screen_on_time,breakfast,lunch,dinner,snacks,water,wakeup,sleep,sleepMood,dayMood,dayNote,tasks_done,tasks_total")
+        sb.appendLine("date,owner,screen_on_time,weight_kg,breakfast,lunch,dinner,snacks,water,wakeup,sleep,sleepMood,dayMood,dayNote,tasks_done,tasks_total")
         logs.sortedBy { it.dateKey }.forEach { l ->
             val done = l.tasks.count { it.done }
             fun esc(s: String) = "\"${s.replace("\"", "'").replace("\n", " ")}\""
             sb.appendLine(
-                listOf(l.dateKey, l.ownerName, esc(l.screenOnTime), esc(l.breakfast), esc(l.lunch), esc(l.dinner),
+                listOf(l.dateKey, l.ownerName, esc(l.screenOnTime), if (l.weightKg > 0) "%.1f".format(l.weightKg) else "", esc(l.breakfast), esc(l.lunch), esc(l.dinner),
                     esc(l.snacks), l.waterGlasses.toString(), l.wakeupTime, l.sleepTime,
                     l.sleepMood, l.dayMood, esc(l.dayNote), done.toString(), l.tasks.size.toString()
                 ).joinToString(",")

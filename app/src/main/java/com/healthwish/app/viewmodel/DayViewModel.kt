@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.healthwish.app.data.DayRepository
 import com.healthwish.app.model.DayLog
 import com.healthwish.app.model.HabitTask
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -24,9 +26,19 @@ class DayViewModel : ViewModel() {
     val tkkuYesterday: StateFlow<DayLog?> = _tkkuYesterday.asStateFlow()
     val shumuYesterday: StateFlow<DayLog?> = _shumuYesterday.asStateFlow()
 
+    // Month logs (bounded query): scoreboard, streak, weekly summary, weight chart ke liye
+    private val _monthTkku = MutableStateFlow<List<DayLog>>(emptyList())
+    private val _monthShumu = MutableStateFlow<List<DayLog>>(emptyList())
+    val monthTkku: StateFlow<List<DayLog>> = _monthTkku.asStateFlow()
+    val monthShumu: StateFlow<List<DayLog>> = _monthShumu.asStateFlow()
+
     // Server se initial load ho gaya ya nahi — isse pehle full-doc save karna unsafe hai
     @Volatile private var tkkuReady = false
     @Volatile private var shumuReady = false
+
+    // Water stepper ke rapid taps ko coalesce karta hai (1 write per burst)
+    private var waterJobTkku: Job? = null
+    private var waterJobShumu: Job? = null
 
     init {
         viewModelScope.launch {
@@ -40,11 +52,13 @@ class DayViewModel : ViewModel() {
             shumuReady = true
             DayRepository.loadDay("Tkku", yday)?.let { _tkkuYesterday.value = it }
             DayRepository.loadDay("Shumu", yday)?.let { _shumuYesterday.value = it }
+            refreshMonthData()
 
             // Real-time live listener for Tkku
             DayRepository.listenDay("Tkku", today) { log ->
                 if (log != null) {
                     _tkkuLog.value = log
+                    patchMonthLocal("Tkku", log)
                 }
             }
 
@@ -52,8 +66,36 @@ class DayViewModel : ViewModel() {
             DayRepository.listenDay("Shumu", today) { log ->
                 if (log != null) {
                     _shumuLog.value = log
+                    patchMonthLocal("Shumu", log)
                 }
             }
+        }
+    }
+
+    fun refreshMonthData() {
+        viewModelScope.launch {
+            try {
+                val from = DayRepository.monthStartKey()
+                _monthTkku.value = DayRepository.loadSince("Tkku", from, 40)
+                _monthShumu.value = DayRepository.loadSince("Shumu", from, 40)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun patchMonthLocal(profile: String, updated: DayLog) {
+        if (updated.dateKey != today) return
+        if (profile.equals("Tkku", ignoreCase = true)) {
+            val list = _monthTkku.value.toMutableList()
+            val i = list.indexOfFirst { it.dateKey == today }
+            if (i >= 0) list[i] = updated else list.add(0, updated)
+            _monthTkku.value = list
+        } else {
+            val list = _monthShumu.value.toMutableList()
+            val i = list.indexOfFirst { it.dateKey == today }
+            if (i >= 0) list[i] = updated else list.add(0, updated)
+            _monthShumu.value = list
         }
     }
 
@@ -61,10 +103,12 @@ class DayViewModel : ViewModel() {
         if (profile.equals("Tkku", ignoreCase = true)) {
             val updated = fn(_tkkuLog.value.copy(ownerName = "Tkku", dateKey = today))
             _tkkuLog.value = updated
+            patchMonthLocal("Tkku", updated)
             viewModelScope.launch { DayRepository.saveDay(updated, "Tkku") }
         } else {
             val updated = fn(_shumuLog.value.copy(ownerName = "Shumu", dateKey = today))
             _shumuLog.value = updated
+            patchMonthLocal("Shumu", updated)
             viewModelScope.launch { DayRepository.saveDay(updated, "Shumu") }
         }
     }
@@ -96,6 +140,34 @@ class DayViewModel : ViewModel() {
 
     fun setWater(profile: String, n: Int) = updateProfile(profile) { l ->
         l.copy(waterGlasses = n)
+    }
+
+    // Water +/- ke rapid taps: UI turant, server write 700ms debounce (burst = 1 write)
+    fun setWaterFast(profile: String, n: Int) {
+        val safe = n.coerceAtLeast(0)
+        if (profile.equals("Tkku", ignoreCase = true)) {
+            val updated = _tkkuLog.value.copy(ownerName = "Tkku", dateKey = today, waterGlasses = safe)
+            _tkkuLog.value = updated
+            patchMonthLocal("Tkku", updated)
+            waterJobTkku?.cancel()
+            waterJobTkku = viewModelScope.launch {
+                delay(700)
+                DayRepository.saveDay(_tkkuLog.value.copy(ownerName = "Tkku", dateKey = today), "Tkku")
+            }
+        } else {
+            val updated = _shumuLog.value.copy(ownerName = "Shumu", dateKey = today, waterGlasses = safe)
+            _shumuLog.value = updated
+            patchMonthLocal("Shumu", updated)
+            waterJobShumu?.cancel()
+            waterJobShumu = viewModelScope.launch {
+                delay(700)
+                DayRepository.saveDay(_shumuLog.value.copy(ownerName = "Shumu", dateKey = today), "Shumu")
+            }
+        }
+    }
+
+    fun setWeight(profile: String, kg: Float) = updateProfile(profile) { l ->
+        l.copy(weightKg = kg.coerceIn(0f, 300f))
     }
 
     // SAFE SOT sync: kabhi full-doc save nahi karta, sirf screenOnTime field merge karta hai.
