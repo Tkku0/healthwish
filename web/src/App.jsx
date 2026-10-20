@@ -86,6 +86,7 @@ function Field({ label, ...p }) {
 // ---------- App ----------
 export default function App() {
   const [auth, setAuth] = useState(() => getSession());
+  const [skipAuth, setSkipAuth] = useState(() => localStorage.getItem("hw_skip_auth") === "1");
   const [profile, setProfile] = useState(() => localStorage.getItem("hw_profile") || "");
   const [lockHash, setLockHash] = useState(() => localStorage.getItem("hw_lock_hash") || "");
   const [unlocked, setUnlocked] = useState(false);
@@ -145,20 +146,18 @@ export default function App() {
   useEffect(() => { if (profile && tab === "history") reloadRecent(); }, [profile, tab, reloadRecent, dateKey]);
 
   // session validate (token refresh) + couple-membership register
+  // NOTE: setAuth yahan NAHI karna — getSession() har baar naya object deta hai → infinite loop → Chrome hang.
   useEffect(() => {
     if (!auth) return;
     let alive = true;
     (async () => {
       try {
         await getValidToken();
-        if (alive) setAuth(getSession());
         await registerMembership(auth.email);
-      } catch {
-        if (alive) setAuth(getSession()); // logout() ke baad null ho sakta hai
-      }
+      } catch {}
     })();
     return () => { alive = false; };
-  }, [auth]); // eslint-disable-line
+  }, [auth?.uid]); // eslint-disable-line
 
   // debounced autosave
   const persist = useCallback((next) => {
@@ -182,7 +181,7 @@ export default function App() {
   }, [reloadRecent, tab]);
 
   if (lockHash && !unlocked) return <LockScreen hash={lockHash} onOk={() => setUnlocked(true)} />;
-  if (!auth) return <AuthScreen onAuth={async (email) => { setAuth(getSession()); try { await registerMembership(email); } catch {} }} />;
+  if (!auth && !skipAuth) return <AuthScreen onAuth={async (email) => { setAuth(getSession()); try { await registerMembership(email); } catch {} }} onSkip={() => { localStorage.setItem("hw_skip_auth", "1"); setSkipAuth(true); }} />;
   if (!profile) return <ProfileGate onPick={(p) => { localStorage.setItem("hw_profile", p); setProfile(p); }} installEvt={installEvt} />;
 
   const set = (k, v) => persist({ ...day, [k]: v });
@@ -291,7 +290,7 @@ function ProfileGate({ onPick, installEvt }) {
 }
 
 // ---------- Auth gate ----------
-function AuthScreen({ onAuth }) {
+function AuthScreen({ onAuth, onSkip }) {
   const [mode, setMode] = useState("login"); // login | signup
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -326,6 +325,7 @@ function AuthScreen({ onAuth }) {
           className="w-full text-xs text-lime-300/90 py-1">
           {mode === "signup" ? "Already a member? Login" : "Pehli baar? Sign Up banao"}
         </button>
+        <button onClick={onSkip} className="w-full text-[11px] text-neutral-500 py-1">Abhi login karna nahi — manual mode me jao →</button>
       </div>
       {mode === "signup" && <p className="text-[11px] text-neutral-500 mt-6 max-w-xs">Couple ke dono partner apne email se signup karte hain — pehla member couple cred karta hai, doosre ka email doosre device pe whitelist hota hai.</p>}
     </div>
