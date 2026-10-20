@@ -288,6 +288,28 @@ export async function saveDay(log) {
 }
 
 // Recent N days for one profile (History + CSV + weight chart)
+// runQuery scan rules me get() (couple-membership) ho jab Firestore QUERY-level 403 abort kar deta hai —
+// isliye pehle single-collection scan chalta hai; fail/khali pe batchGet (per-doc reads, rules-safe)
+// pichhle N din ke doc-IDs seedha marta hai. Doc-ID format hi authority hai: {date}_{profile-lower}.
+async function batchGetDays(ownerName, spanDays) {
+  const names = [];
+  for (let i = 0; i < spanDays; i++) {
+    names.push(`projects/${PROJECT_ID}/databases/(default)/documents/couples/${COUPLE_ID}/days/${docIdFor(shiftDateKey(todayKey(), -i), ownerName)}`);
+  }
+  const res = await fsFetch(`${BASE}:batchGet?key=${API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ documents: names }),
+  });
+  const rows = await res.json();
+  const out = [];
+  for (const r of rows) {
+    if (r.found) out.push(parseDoc(r.found.name, r.found.fields));
+  }
+  out.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
+  return out;
+}
+
 export async function listRecent(ownerName, limit = 30) {
   const url = `${BASE}:runQuery?key=${API_KEY}`;
   const q = {
@@ -296,6 +318,7 @@ export async function listRecent(ownerName, limit = 30) {
       limit: 300,
     },
   };
+  let scanned = null;
   try {
     const res = await fsFetch(url, {
       method: "POST",
@@ -303,24 +326,31 @@ export async function listRecent(ownerName, limit = 30) {
       body: JSON.stringify(q),
     });
     const rows = await res.json();
-    const suffix = "_" + ownerName.toLowerCase();
-    const out = [];
-    for (const r of rows) {
-      if (!r.document) continue;
-      // legacy-safe filter: doc id "{date}_{profile-lower}" hi source of truth
-      const id = r.document.name.split("/").pop();
-      if (!id.endsWith(suffix)) continue;
-      out.push(parseDoc(r.document.name, r.document.fields));
+    if (Array.isArray(rows) && !(rows.length === 1 && rows[0].error)) {
+      const suffix = "_" + ownerName.toLowerCase();
+      const out = [];
+      for (const r of rows) {
+        if (!r.document) continue;
+        const id = r.document.name.split("/").pop();
+        if (!id.endsWith(suffix)) continue;
+        out.push(parseDoc(r.document.name, r.document.fields));
+      }
+      scanned = out;
     }
-    out.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
-    return out.slice(0, limit);
-  } catch (e) {
-    // Structured query block ho (rules) to seedha-doc fallback: aaj + kal
+  } catch {
+    scanned = null;
+  }
+  if (scanned && scanned.length) {
+    scanned.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
+    return scanned.slice(0, limit);
+  }
+  try {
+    return await batchGetDays(ownerName, Math.min(limit + 90, 400));
+  } catch {
+    // last resort: aaj + kal
     const out = [];
     for (const dk of [todayKey(), shiftDateKey(todayKey(), -1)]) {
-      try {
-        out.push(await getDay(dk, ownerName));
-      } catch {}
+      try { out.push(await getDay(dk, ownerName)); } catch {}
     }
     return out;
   }
