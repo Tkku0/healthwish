@@ -971,8 +971,9 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   };
   const saveConfig = async () => {
     const k = key.trim().startsWith("•") ? getAI().apiKey : key.trim();
-    if (!/^http/.test(base.trim()) || !k || !model.trim()) { setStatus("Teeno fields bharo 🙂"); return; }
-    saveAI({ baseUrl: base, apiKey: k, model, prompt });
+    if (!/^http/.test(base.trim()) || !model.trim()) { setStatus("Base URL + Model bharo 🙂"); return; }
+    if (!k && preset !== "Custom") { setStatus("API Key bhi dalo 🙂"); return; }
+    saveAI({ baseUrl: base, apiKey: k || "no-key", model, prompt });
     setStatus("Saved — Test 🔌 dabao");
     setKey("••••••••••");
   };
@@ -1019,11 +1020,15 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         {usingShared() && <p className="text-xs text-lime-300 bg-lime-400/10 border border-lime-400/20 rounded-xl px-3 py-2 mb-3">💞 Partner ka AI setup share ho raha hai — duplicate setup ki zaroorat nahi.</p>}
         <div className="flex gap-1.5 flex-wrap mb-3">
           {Object.keys(PRESETS).map((k) => <Chip key={k} on={preset === k} onClick={() => applyPreset(k)}>{k.split(" ")[0]}</Chip>)}
+          <Chip on={preset === "Custom"} onClick={() => { setPreset("Custom"); setKey(""); }}>⚙️ Custom</Chip>
         </div>
         <div className="space-y-3">
-          <Field label="Base URL" value={base} onChange={(e) => setBase(e.target.value)} placeholder="https://api.groq.com/openai/v1" />
-          <Field label="API Key" value={key} onChange={(e) => setKey(e.target.value)} placeholder="gsk_…" />
-          <Field label="Model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="openai/gpt-oss-120b" />
+          <Field label="Base URL" value={base} onChange={(e) => setBase(e.target.value)} placeholder={preset === "Custom" ? "http://192.168.1.5:1234/v1" : "https://api.groq.com/openai/v1"} />
+          {preset === "Custom" && (
+            <p className="text-[11px] text-neutral-400 -mt-1.5">Koi bhi OpenAI-compatible chat API chalega — LM Studio, Ollama (<code className="text-lime-300">Ollama base + /v1</code>, same device pe localhost), OpenWebUI, LiteLLM, vLLM, Together, Mistral… Endpoint: <b>baseUrl + /chat/completions</b></p>
+          )}
+          <Field label="API Key" value={key} onChange={(e) => setKey(e.target.value)} placeholder={preset === "Custom" ? "khali bhi chalega (local server)" : "gsk_…"} />
+          <Field label="Model" value={model} onChange={(e) => setModel(e.target.value)} placeholder={preset === "Custom" ? "e.g. qwen2.5-7b-instruct" : "openai/gpt-oss-120b"} />
         </div>
         <div className="flex gap-2 mt-3">
           <Btn className="flex-1" onClick={saveConfig}>Save</Btn>
