@@ -221,6 +221,32 @@ export async function setPartnerEmails(emails) {
   });
 }
 
+// ---- shared AI config (tumne set ki ho to partner ko bhi chale) ----
+export async function getSharedAI() {
+  try {
+    const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+    const j = await res.json();
+    const mv = j.fields && j.fields.aiCfg;
+    if (!mv || !mv.mapValue) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(mv.mapValue.fields || {})) out[k] = fromFs(v);
+    return out.key && out.key.length >= 8 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSharedAI(cfg) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  const fields = { aiCfg: toFs(cfg) };
+  const mask = "updateMask.fieldPaths=aiCfg";
+  await fsFetch(`${url}&${mask}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+}
+
 export async function getDay(dateKey, ownerName) {
   const id = docIdFor(dateKey, ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;
@@ -238,13 +264,13 @@ export async function existsDay(dateKey, ownerName) {
   }
 }
 
-// Full-doc write (Android saveDay jaisa) + screenOnTime preserve (web usko touch nahi karta)
+// Full-doc write (Android saveDay jaisa) + screenOnTime preserve
 export async function saveDay(log) {
   let prev = {};
   try {
     prev = await getDay(log.dateKey, log.ownerName);
   } catch {}
-  const merged = { ...prev, ...log, screenOnTime: prev.screenOnTime || log.screenOnTime || "" };
+  const merged = { ...prev, ...log, screenOnTime: log.screenOnTime ?? (prev.screenOnTime || "") };
   merged.updatedAt = new Date().toISOString(); // browser timestamp string; Android Timestamp? nahi — sirf string field
   const fields = {};
   for (const [k, v] of Object.entries(merged)) {

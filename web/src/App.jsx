@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
-  PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails,
+  PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
+  reviewScore, storeShared, usingShared,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
+import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours } from "./lib/score.js";
 
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
@@ -145,7 +147,20 @@ export default function App() {
 
   useEffect(() => { if (profile && tab === "history") reloadRecent(); }, [profile, tab, reloadRecent, dateKey]);
 
-  // session validate (token refresh) + couple-membership register
+  // partner ka recent — History tab [Mera | partner] filter pe load
+  const partnerOf = PROFILE_PRESETS.includes(profile) ? PROFILE_PRESETS.find((p) => p !== profile) : null;
+  const [partnerRecent, setPartnerRecent] = useState([]);
+  const [partnerLoaded, setPartnerLoaded] = useState("");
+  const loadPartnerRecent = useCallback(async () => {
+    if (!partnerOf || partnerLoaded === partnerOf) return partnerRecent;
+    try {
+      const docs = (await listRecent(partnerOf, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
+      setPartnerRecent(docs); setPartnerLoaded(partnerOf);
+      return docs;
+    } catch { setPartnerRecent([]); return []; }
+  }, [partnerOf, partnerLoaded, partnerRecent]);
+
+  // session validate (token refresh) + couple-membership register + shared AI adopt
   // NOTE: setAuth yahan NAHI karna — getSession() har baar naya object deta hai → infinite loop → Chrome hang.
   useEffect(() => {
     if (!auth) return;
@@ -154,6 +169,9 @@ export default function App() {
       try {
         await getValidToken();
         await registerMembership(auth.email);
+        // partner ne AI setup share kiya ho to apne device me adopt karo (local key wins)
+        const shared = await getSharedAI();
+        if (alive && shared) storeShared(shared);
       } catch {}
     })();
     return () => { alive = false; };
@@ -185,6 +203,7 @@ export default function App() {
   if (!profile) return <ProfileGate onPick={(p) => { localStorage.setItem("hw_profile", p); setProfile(p); }} installEvt={installEvt} />;
 
   const set = (k, v) => persist({ ...day, [k]: v });
+  const partner = partnerOf;
   const taskToggle = (idx) => {
     const tasks = day.tasks.map((t, i) => (i === idx ? { ...t, done: !t.done } : t));
     persist({ ...day, tasks });
@@ -220,9 +239,10 @@ export default function App() {
           <div className="py-16 text-center text-neutral-400">Loading…</div>
         ) : tab === "today" ? (
           <TodayBoard day={day} dateKey={dateKey} set={set} taskToggle={taskToggle} doneCount={doneCount}
-            target={target} aiOn={isConfigured()} persist={persist} />
+            target={target} aiOn={isConfigured()} persist={persist} partner={partner} profile={profile} reloadRecent={reloadRecent} recent={recent} />
         ) : tab === "history" ? (
-          <HistoryBoard recent={recent} onOpen={(dk) => { setDateKey(dk); setTab("today"); }} target={target} profile={profile} />
+          <HistoryBoard recent={recent} onOpen={(dk) => { setDateKey(dk); setTab("today"); }} target={target} profile={profile} partner={partner}
+            loadPartnerRecent={loadPartnerRecent} partnerRecent={partnerRecent} />
         ) : (
           <SettingsBoard profile={profile} target={target} setTarget={(t) => { setTarget(t); localStorage.setItem("hw_kcal_target", String(t)); }}
             onSwitchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
@@ -401,7 +421,7 @@ function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, on
 }
 
 // ---------- Today ----------
-function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, persist }) {
+function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, persist, partner, profile }) {
   const [mealEdit, setMealEdit] = useState(null); // "breakfast" ...
   const [aiOpen, setAiOpen] = useState(false);
   const total = dayTotal(day);
@@ -411,6 +431,8 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
   return (
     <div className="space-y-4 hw-fade-in">
+      {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} />}
+
       {/* Tasks progress */}
       <Card className={`bg-gradient-to-r ${grad} !bg-none border-0 relative overflow-hidden`}
         style={{ background: undefined }}>
@@ -494,6 +516,9 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
         </div>
       </Card>
 
+      {/* Score */}
+      <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} />
+
       {/* Sleep */}
       <Card>
         <p className="font-semibold mb-3">😴 Sleep</p>
@@ -522,6 +547,24 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
         </div>
       </Card>
 
+      {/* Screen time */}
+      <Card>
+        <p className="font-semibold mb-2">📱 Mobile screen-on time</p>
+        <div className="flex items-end gap-2">
+          <input type="number" step="0.5" min="0" max="24" inputMode="decimal"
+            defaultValue={screenHours(day.screenOnTime) ? String(screenHours(day.screenOnTime)) : ""}
+            onBlur={(e) => {
+              const h = Number(e.target.value);
+              if (!h || h <= 0) { set("screenOnTime", ""); return; }
+              const hh = Math.floor(h); const mm = Math.round((h - hh) * 60);
+              set("screenOnTime", mm ? `${hh}h ${mm}m` : `${hh}h`);
+            }}
+            placeholder="hours (e.g. 5.5)"
+            className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+          <span className="text-xs text-neutral-500 self-center pb-3">score me count hota hai (≤6h best)</span>
+        </div>
+      </Card>
+
       {/* Weight */}
       <Card>
         <p className="font-semibold mb-2">⚖️ Weight</p>
@@ -542,10 +585,120 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
       </Card>
 
-      <p className="text-[11px] text-neutral-600 text-center">⏱ Screen time feature app (Android) me hi dikhta hai</p>
-
       {mealEdit && <MealSheet meal={mealEdit} day={day} persist={persist} onClose={() => setMealEdit(null)} aiOn={aiOn} />}
     </div>
+  );
+}
+
+// ---------- Score (daily / weekly / monthly) ----------
+function ScoreCard({ day, dateKey, target, profile, aiOn }) {
+  const [range, setRange] = useState("daily"); // daily | weekly | monthly
+  const [docs, setDocs] = useState(null); // listRecent cache
+  const [review, setReview] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  useEffect(() => { setReview(""); }, [range, dateKey]);
+  useEffect(() => {
+    if (range === "daily") return;
+    let alive = true;
+    (async () => {
+      if (docs) return;
+      try {
+        const list = (await listRecent(profile, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
+        if (alive) setDocs(list);
+      } catch { if (alive) setDocs([]); }
+    })();
+    return () => { alive = false; };
+  }, [range, profile]); // eslint-disable-line
+
+  const dScore = dailyScore(day, target);
+  let res = { score: dScore.score, parts: dScore.parts, count: 1 };
+  if (range !== "daily" && docs) {
+    const r = range === "weekly" ? weeklyScore(docs, target, dateKey) : monthlyScore(docs, target, dateKey);
+    res = { score: r.score, parts: [], count: r.count };
+  }
+  const verdict = res.score >= 80 ? "Zabardast! 🔥" : res.score >= 60 ? "Achha ja raha ho 💪" : res.score >= 40 ? "Thoda dheema hai 🌱" : "Kal improvement ✨";
+
+  const askAI = async () => {
+    setReviewBusy(true);
+    setReview(await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target));
+    setReviewBusy(false);
+  };
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-semibold">📊 Health Score</p>
+        <div className="flex gap-1.5">
+          {["daily", "weekly", "monthly"].map((r) => <Chip key={r} on={range === r} onClick={() => setRange(r)}>{r === "daily" ? "Aaj" : r === "weekly" ? "7 din" : "Mahine"}</Chip>)}
+        </div>
+      </div>
+      <div className="flex items-center gap-4">
+        <ScoreRing score={res.score} />
+        <div className="flex-1 space-y-1.5">
+          {res.parts.length
+            ? res.parts.map(([nm, val, max]) => val == null ? null : (
+              <div key={nm} className="flex items-center gap-2">
+                <span className="text-[11px] text-neutral-400 w-14 shrink-0">{nm}</span>
+                <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-lime-400 to-emerald-400" style={{ width: `${(val / max) * 100}%` }} />
+                </div>
+                <span className="text-[10px] text-neutral-500 w-10 text-right">{val}/{max}</span>
+              </div>
+            ))
+            : <p className="text-[11px] text-neutral-400">{range === "weekly" ? "Last 7 din" : "Is mahine"} ka average — {res.count} din ka data</p>}
+        </div>
+      </div>
+      <p className="text-xs text-lime-300/90 mt-2">{verdict}</p>
+      {aiOn && range === "daily" && (
+        review
+          ? <div className="mt-2 text-xs px-3 py-2 rounded-xl bg-lime-400/10 border border-lime-400/20 text-lime-200">{review}</div>
+          : <div className="mt-2"><Btn kind="ghost" className="!bg-white/5" onClick={askAI} disabled={reviewBusy}>{reviewBusy ? "🤖 AI soch raha…" : "✨ AI se day-review"}</Btn></div>
+      )}
+      {range !== "daily" && !docs && <p className="text-xs text-neutral-500 mt-2">Score nikal raha hoon…</p>}
+    </Card>
+  );
+}
+
+function ScoreRing({ score }) {
+  const c = 2 * Math.PI * 26;
+  const filled = (score / 100) * c;
+  return (
+    <svg viewBox="0 0 64 64" className="w-20 h-20 shrink-0">
+      <circle cx="32" cy="32" r="26" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="7" />
+      <circle cx="32" cy="32" r="26" fill="none" stroke={score >= 80 ? "#a3e635" : score >= 60 ? "#34d399" : score >= 40 ? "#fbbf24" : "#f87171"}
+        strokeWidth="7" strokeLinecap="round" strokeDasharray={`${filled} ${c - filled}`} transform="rotate(-90 32 32)" />
+      <text x="32" y="36" textAnchor="middle" className="font-bold" fill="#fff" fontSize="17">{score}</text>
+    </svg>
+  );
+}
+
+// ---------- Partner today mini ----------
+function PartnerMini({ partner, dateKey, target }) {
+  const [pd, setPd] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    getDay(dateKey, partner).then((d) => alive && setPd(d)).catch(() => alive && setPd("none"));
+    return () => { alive = false; };
+  }, [dateKey, partner]);
+  if (pd === "none" || !pd) return null;
+  const t = dayTotal(pd);
+  const done = (pd.tasks || []).filter((x) => x.done).length;
+  return (
+    <button onClick={() => { localStorage.setItem("hw_profile", partner); location.reload(); }}
+      className="w-full text-left px-4 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-lime-400/40 transition flex items-center gap-3">
+      <span className="w-9 h-9 rounded-full bg-pink-400/20 border border-pink-400/30 flex items-center justify-center text-base">💞</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold">{partner} ka aaj</p>
+        <p className="text-[11px] text-neutral-400 mt-0.5 flex gap-2 flex-wrap">
+          <span>🔥 {t}{target ? `/${target}` : ""} kcal</span>
+          <span>💧 {pd.waterGlasses}</span>
+          <span>✅ {done}/{(pd.tasks || []).length}</span>
+          {pd.wakeupTime && <span>⏰ {fmtTime12(pd.wakeupTime)}</span>}
+          {pd.weightKg > 0 && <span>⚖️ {pd.weightKg}kg</span>}
+        </p>
+      </div>
+      <span className="text-neutral-600 text-xs">dekho ›</span>
+    </button>
   );
 }
 
@@ -642,37 +795,73 @@ function AiEntryBox({ day, persist, setAiOpen }) {
 }
 
 // ---------- History ----------
-function HistoryBoard({ recent, onOpen, target, profile }) {
-  if (!recent.length) return <div className="py-16 text-center text-neutral-400">Abhi koi data nahi — Today se shuru karo 💪</div>;
-  const weights = recent.filter((d) => d.weightKg > 0).slice(0, 15).reverse();
+function HistoryBoard({ recent, onOpen, target, profile, partner, loadPartnerRecent, partnerRecent }) {
+  const [view, setView] = useState("me"); // me | partner
+  const who = view === "partner" ? partner : profile;
+  const cur = view === "partner" ? (partnerRecent || []) : (recent || []);
+  useEffect(() => { if (view === "partner") loadPartnerRecent?.(); }, [view, loadPartnerRecent]);
+
+  const viewScore = cur.length
+    ? Math.round(cur.reduce((s, d) => s + dailyScore(d, target).score, 0) / cur.length)
+    : 0;
+
   return (
     <div className="space-y-4 hw-fade-in">
-      {weights.length > 1 && <WeightChart points={weights} />}
-      <Card>
-        <p className="font-semibold mb-3">Last {recent.length} days — {profile}</p>
-        <div className="space-y-2">
-          {recent.map((d) => {
-            const t = dayTotal(d);
-            return (
-              <button key={d.id} onClick={() => onOpen(d.dateKey)}
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-black/20 border border-white/5 hover:border-lime-400/40 hover:bg-white/5 transition text-left">
-                <div className="w-14 shrink-0">
-                  <p className="text-sm font-semibold">{prettyDate(d.dateKey)}</p>
-                  <p className="text-[10px] text-neutral-500">{d.dateKey.slice(5)}</p>
-                </div>
-                <div className="flex-1 grid grid-cols-3 gap-1 text-center text-[11px] text-neutral-400">
-                  <div><span className="block text-sm font-bold text-white">🔥 {t}</span>kcal{target > 0 ? <span className={t > target ? "text-red-300" : "text-lime-300"}> /{target}</span> : null}</div>
-                  <div><span className="block text-sm font-bold text-white">💧 {d.waterGlasses}</span>glasses</div>
-                  <div><span className="block text-sm font-bold text-white">{d.weightKg > 0 ? `${d.weightKg}` : "—"}</span>kg</div>
-                </div>
-                <span className="text-neutral-600">›</span>
-              </button>
-            );
-          })}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1.5">
+          <Chip on={view === "me"} onClick={() => setView("me")}>👤 {profile}</Chip>
+          {partner && <Chip on={view === "partner"} onClick={() => setView("partner")}>💞 {partner}</Chip>}
         </div>
-      </Card>
+        {cur.length > 0 && (
+          <span className={`text-xs px-2.5 py-1 rounded-full border font-semibold ${viewScore >= 70 ? "text-lime-300 bg-lime-400/10 border-lime-400/20" : viewScore >= 45 ? "text-amber-300 bg-amber-400/10 border-amber-400/20" : "text-red-300 bg-red-400/10 border-red-400/20"}`}>
+            📊 avg {viewScore}
+          </span>
+        )}
+      </div>
+      {!cur.length ? (
+        <div className="py-16 text-center text-neutral-400">{view === "partner" ? `${partner} ka data abhi nahi hai — wo bhi log kar rahi hogi 💪` : "Abhi koi data nahi — Today se shuru karo 💪"}</div>
+      ) : (
+        <>
+          {weightListOf(cur).length > 1 && <WeightChart points={weightListOf(cur)} />}
+          <Card>
+            <p className="font-semibold mb-3">Last {cur.length} days — {who}</p>
+            <div className="space-y-2">
+              {cur.map((d, i) => {
+                const t = dayTotal(d);
+                const s = dailyScore(d, target).score;
+                // sleep: pichhla doc (list DESC) iska sleepTime + iska wakeupTime
+                const prevDoc = cur[i + 1];
+                const sh = prevDoc ? sleepHours(prevDoc, d) : 0;
+                const sc = screenHours(d.screenOnTime);
+                return (
+                  <button key={d.id} onClick={() => onOpen(d.dateKey)}
+                    className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-black/20 border border-white/5 hover:border-lime-400/40 hover:bg-white/5 transition text-left">
+                    <div className="w-14 shrink-0">
+                      <p className="text-sm font-semibold">{prettyDate(d.dateKey)}</p>
+                      <p className="text-[10px] text-neutral-500">{d.dateKey.slice(5)}</p>
+                    </div>
+                    <div className="flex-1 flex items-center justify-between text-[11px] text-neutral-400 flex-wrap gap-x-3">
+                      <span>🔥 <b className="text-white">{t}</b>{target > 0 ? <span className={t > target ? "text-red-300" : "text-lime-300"}>/{target}</span> : null}</span>
+                      <span>💧 <b className="text-white">{d.waterGlasses}</b></span>
+                      <span>✅ <b className="text-white">{(d.tasks || []).filter((x) => x.done).length}</b>/{(d.tasks || []).length}</span>
+                      {sh > 0 && <span>😴 <b className="text-white">{sh}h</b></span>}
+                      {sc > 0 && <span>📱 <b className="text-white">{sc}h</b></span>}
+                      {d.weightKg > 0 && <span>⚖️ <b className="text-white">{d.weightKg}</b></span>}
+                    </div>
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${s >= 70 ? "text-lime-300 bg-lime-400/10" : s >= 45 ? "text-amber-300 bg-amber-400/10" : "text-red-300 bg-red-400/10"}`}>{s}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
+}
+
+function weightListOf(list) {
+  return (list || []).filter((d) => d.weightKg > 0).slice(0, 15).reverse();
 }
 
 function WeightChart({ points }) {
@@ -720,6 +909,7 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   const [pinText, setPinText] = useState("");
   const [pinMsg, setPinMsg] = useState("");
   const [csvMsg, setCsvMsg] = useState("");
+  const [shareMsg, setShareMsg] = useState("");
 
   const applyPreset = (name) => {
     setPreset(name);
@@ -772,6 +962,7 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
       <Card>
         <p className="font-bold mb-1">AI Assistant ✨</p>
         <p className={`text-xs mb-3 font-semibold ${status.startsWith("AI connected") || status.startsWith("Saved") ? "text-lime-400" : "text-amber-300"}`}>{status}</p>
+        {usingShared() && <p className="text-xs text-lime-300 bg-lime-400/10 border border-lime-400/20 rounded-xl px-3 py-2 mb-3">💞 Partner ka AI setup share ho raha hai — duplicate setup ki zaroorat nahi.</p>}
         <div className="flex gap-1.5 flex-wrap mb-3">
           {Object.keys(PRESETS).map((k) => <Chip key={k} on={preset === k} onClick={() => applyPreset(k)}>{k.split(" ")[0]}</Chip>)}
         </div>
@@ -783,6 +974,18 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         <div className="flex gap-2 mt-3">
           <Btn className="flex-1" onClick={saveConfig}>Save</Btn>
           <Btn kind="ghost" className="flex-1" onClick={runTest} disabled={testing}>{testing ? "…" : "Test 🔌"}</Btn>
+        </div>
+        <div className="mt-2">
+          <button onClick={async () => {
+            const cfg = getAI();
+            if (!/^http/.test(cfg.baseUrl) || !cfg.apiKey || !cfg.model) { setShareMsg("Pehle apna AI setup Save karo 💡"); return; }
+            try {
+              await setSharedAI({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, model: cfg.model, prompt: cfg.prompt });
+              setShareMsg("Partner ke saath share ✓ — uske device pe apne aap chalega");
+            } catch (e) { setShareMsg("Fail: " + e.message); }
+          }}
+            className="text-xs text-pink-300/90 hover:text-pink-300">💞 Ye setup partner ke saath share karo</button>
+          {shareMsg && <p className="text-xs text-lime-300 mt-1">{shareMsg}</p>}
         </div>
         <button onClick={() => { clearAI(); setKey(""); setBase(""); setModel(""); setStatus("Removed — manual mode"); setPromptOpen(false); setPrompt(DEFAULT_RULES); }}
           className="mt-2 text-xs text-red-300/80 hover:text-red-300">Clear Saved Setup</button>

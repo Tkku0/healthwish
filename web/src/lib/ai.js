@@ -31,13 +31,39 @@ export const DEFAULT_RULES =
   "CRITICAL OUTPUT RULE: your entire reply must be ONLY the single JSON object asked for in the system message — " +
   "no headings, no emojis, no ranges, no extra text. The app parses it automatically and maintains daily totals itself.";
 
+const SHARED_CACHE = "hw_shared_ai";
+
+export function storeShared(cfg) {
+  try {
+    localStorage.setItem(SHARED_CACHE, JSON.stringify(cfg || null));
+  } catch {}
+}
+
+export function clearShared() {
+  localStorage.removeItem(SHARED_CACHE);
+}
+
+function sharedCfg() {
+  try {
+    const c = JSON.parse(localStorage.getItem(SHARED_CACHE) || "null");
+    return c && c.key && c.key.length >= 8 && c.baseUrl ? c : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getAI() {
+  const sh = sharedCfg();
   return {
-    baseUrl: localStorage.getItem(PREFS.base) || "",
-    apiKey: localStorage.getItem(PREFS.key) || "",
-    model: localStorage.getItem(PREFS.model) || "",
-    prompt: localStorage.getItem(PREFS.prompt) || DEFAULT_RULES,
+    baseUrl: localStorage.getItem(PREFS.base) || (sh && sh.baseUrl) || "",
+    apiKey: localStorage.getItem(PREFS.key) || (sh && sh.key) || "",
+    model: localStorage.getItem(PREFS.model) || (sh && sh.model) || "",
+    prompt: localStorage.getItem(PREFS.prompt) || (sh && sh.prompt) || DEFAULT_RULES,
   };
+}
+
+export function usingShared() {
+  return !!!localStorage.getItem(PREFS.key) && !!sharedCfg();
 }
 
 export function saveAI({ baseUrl, apiKey, model, prompt }) {
@@ -162,4 +188,34 @@ export async function testAI() {
   );
   const j = extractJsonObject(out);
   return j && j.ok ? "JSON OK" : out.slice(0, 60);
+}
+
+export async function reviewScore(day, scoreRes, target) {
+  const cfg = getAI();
+  const sys =
+    "You are a supportive health coach in a couple health app. Reply strictly as JSON: " +
+    '{"review":"..."} with 1-2 short friendly sentences mixing Hindi and English like the user writes. ' +
+    "Be specific about the numbers given. Max one emoji.";
+  const h = String(day.screenOnTime || "").match(/\d+(\.\d+)?/);
+  const user = JSON.stringify({
+    kcalTarget: target,
+    totalKcal: scoreRes.total,
+    waterGlasses: day.waterGlasses,
+    tasksDone: ((day.tasks || []).filter((t) => t.done).length) + "/" + (day.tasks || []).length,
+    screenHours: h ? parseFloat(h[0]) : null,
+    wakeupTime: day.wakeupTime,
+    sleepMood: day.sleepMood,
+    dayMood: day.dayMood,
+    dayNote: (day.dayNote || "").slice(0, 200),
+    meals: [day.breakfast, day.lunch, day.dinner, day.snacks].filter(Boolean).join("; ").slice(0, 300),
+    dailyScore: scoreRes.score,
+    breakdown: scoreRes.parts.map((p) => `${p[0]} ${p[1]}/${p[2]}`).join(", "),
+  });
+  try {
+    const out = await aiCall(cfg, sys, user);
+    const j = extractJsonObject(out);
+    return (j && j.review ? String(j.review) : out).slice(0, 240);
+  } catch (e) {
+    return "AI review offline: " + e.message;
+  }
 }
