@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: #101018;
+  color: #e8e8f0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overscroll-behavior-y: none;
+}
+
+input, textarea, select, button { font: inherit; }
+
+/* number inputs me spinner chhupao */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+
+.hw-gradient-text {
+  background: linear-gradient(90deg, #a3e635, #34d399, #22d3ee);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hw-card {
+  background: linear-gradient(160deg, #1b1b25 0%, #17171f 100%);
+  border: 1px solid #2a2a36;
+  border-radius: 1.25rem;
+}
+
+.hw-fade-in {
+  animation: hwFade 0.25s ease both;
+}
+@keyframes hwFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
