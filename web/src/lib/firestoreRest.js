@@ -195,6 +195,32 @@ async function authUid() {
   return cachedUid;
 }
 
+// ---- couple membership management (Settings) ----
+export async function getCoupleInfo() {
+  try {
+    const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+    const j = await res.json();
+    const f = j.fields || {};
+    return {
+      members: ((f.members || {}).values || []).map((v) => v.stringValue).filter(Boolean),
+      partnerEmails: ((f.partnerEmails || {}).values || []).map((v) => v.stringValue).filter(Boolean),
+    };
+  } catch {
+    return { members: [], partnerEmails: [] };
+  }
+}
+
+export async function setPartnerEmails(emails) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  const fields = { partnerEmails: { arrayValue: { values: emails.map((e) => ({ stringValue: e.toLowerCase() })) } } };
+  const mask = "updateMask.fieldPaths=partnerEmails";
+  await fsFetch(`${url}&${mask}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+}
+
 export async function getDay(dateKey, ownerName) {
   const id = docIdFor(dateKey, ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;

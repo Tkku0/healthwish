@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
-  PROFILE_PRESETS, cleanTasks, registerMembership,
+  PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -329,6 +329,49 @@ function AuthScreen({ onAuth, onSkip }) {
       </div>
       {mode === "signup" && <p className="text-[11px] text-neutral-500 mt-6 max-w-xs">Couple ke dono partner apne email se signup karte hain — pehla member couple cred karta hai, doosre ka email doosre device pe whitelist hota hai.</p>}
     </div>
+  );
+}
+
+// ---------- Couple security card ----------
+function CoupleCard({ email }) {
+  const [info, setInfo] = useState(null);
+  const [newEmail, setNewEmail] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = useCallback(async () => setInfo(await getCoupleInfo()), []);
+  useEffect(() => { load(); }, [load]);
+  const add = async () => {
+    const e = newEmail.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { setMsg("Email sahi likho"); return; }
+    const emails = [...new Set([...(info?.partnerEmails || []), e])];
+    try {
+      await setPartnerEmails(emails);
+      setInfo({ ...info, partnerEmails: emails });
+      setNewEmail(""); setMsg("Partner email added ✓");
+    } catch (err) { setMsg("Fail: " + err.message); }
+  };
+  const others = (info?.partnerEmails || []).filter((e) => e !== email);
+  return (
+    <Card>
+      <p className="font-semibold text-sm mb-1">🔐 Couple Access</p>
+      <p className="text-[11px] text-neutral-500 mb-3">Sirf ye emails login karke data dekh sakte hain. Partner ko add karo, phir wo apne phone se isi email se Sign Up karega.</p>
+      <div className="space-y-1 mb-2">
+        <div className="text-xs px-3 py-2 rounded-lg bg-lime-400/10 border border-lime-400/20 flex items-center gap-2">
+          <span>👤</span><span className="flex-1">{email}</span><span className="text-lime-300 text-[10px]">tum</span>
+        </div>
+        {others.map((e) => (
+          <div key={e} className="text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
+            <span>💞</span><span className="flex-1">{e}</span><span className="text-neutral-500 text-[10px]">partner</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="partner@example.com"
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+        <Btn onClick={add}>Add</Btn>
+      </div>
+      {msg && <p className="text-xs text-lime-300 mt-2">{msg}</p>}
+    </Card>
   );
 }
 
@@ -798,6 +841,9 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         <Btn kind="danger" onClick={onLogout}>Logout</Btn>
         <p className="text-[11px] text-neutral-500 mt-2">Logout ke baad data device se gaya nahi — sirf account band hota hai.</p>
       </Card>
+
+      {/* Couple security */}
+      {auth && <CoupleCard email={auth.email} />}
 
       <Btn kind="ghost" className="w-full" onClick={onSwitchProfile}>⇅ Switch Profile ({profile})</Btn>
       <p className="text-center text-[11px] text-neutral-600 pb-4">HealthWish Web 💚 · couple health diary</p>
