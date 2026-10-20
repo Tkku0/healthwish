@@ -45,3 +45,36 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
+
+/* pop — count/check mark achan/ugh pe */
+.hw-pop { animation: hwPop 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes hwPop {
+  0% { transform: scale(0.4); opacity: 0.3; }
+  65% { transform: scale(1.25); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* water splash — bubble flick ke agha rise */
+.hw-rise { animation: hwRise 0.95s ease-out forwards; }
+@keyframes hwRise {
+  0% { opacity: 0; transform: translateY(8px) scale(0.6) rotate(-6deg); }
+  18% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-46px) scale(1.7) rotate(8deg); }
+}
+
+/* bar fill — score/water bars ka smooth fill */
+.hw-barfill { transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* AI thinking pe spin */
+.hw-spin { animation: hwSpin 1.1s linear infinite; display: inline-block; }
+@keyframes hwSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* history row me slow fade-in (bare lists achan mocha nahi nazar aate) */
+.hw-rowfade { animation: hwRow 0.22s ease both; }
+@keyframes hwRow {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}

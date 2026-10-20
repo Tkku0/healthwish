@@ -148,18 +148,12 @@ export default function App() {
 
   useEffect(() => { if (profile && tab === "history") reloadRecent(); }, [profile, tab, reloadRecent, dateKey]);
 
-  // partner ka recent — History tab [Mera | partner] filter pe load
-  const partnerOf = PROFILE_PRESETS.includes(profile) ? PROFILE_PRESETS.find((p) => p !== profile) : null;
-  const [partnerRecent, setPartnerRecent] = useState([]);
-  const [partnerLoaded, setPartnerLoaded] = useState("");
-  const loadPartnerRecent = useCallback(async () => {
-    if (!partnerOf || partnerLoaded === partnerOf) return partnerRecent;
+  // History apni full-scan fetch khud karti hai (300 din tak) — clean cleaned docs
+  const fetchRecentAll = useCallback(async (name) => {
     try {
-      const docs = (await listRecent(partnerOf, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
-      setPartnerRecent(docs); setPartnerLoaded(partnerOf);
-      return docs;
-    } catch { setPartnerRecent([]); return []; }
-  }, [partnerOf, partnerLoaded, partnerRecent]);
+      return (await listRecent(name, 300)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
+    } catch { return []; }
+  }, []);
 
   // session validate (token refresh) + couple-membership register + shared AI adopt
   // NOTE: setAuth yahan NAHI karna — getSession() har baar naya object deta hai → infinite loop → Chrome hang.
@@ -204,7 +198,7 @@ export default function App() {
   if (!profile) return <ProfileGate onPick={(p) => { localStorage.setItem("hw_profile", p); setProfile(p); }} installEvt={installEvt} />;
 
   const set = (k, v) => persist({ ...day, [k]: v });
-  const partner = partnerOf;
+  const partner = PROFILE_PRESETS.includes(profile) ? PROFILE_PRESETS.find((p) => p !== profile) : null;
   const taskToggle = (idx) => {
     const tasks = day.tasks.map((t, i) => (i === idx ? { ...t, done: !t.done } : t));
     persist({ ...day, tasks });
@@ -242,8 +236,8 @@ export default function App() {
           <TodayBoard day={day} dateKey={dateKey} set={set} taskToggle={taskToggle} doneCount={doneCount}
             target={target} aiOn={isConfigured()} persist={persist} partner={partner} profile={profile} reloadRecent={reloadRecent} recent={recent} />
         ) : tab === "history" ? (
-          <HistoryBoard recent={recent} onOpen={(dk) => { setDateKey(dk); setTab("today"); }} target={target} profile={profile} partner={partner}
-            loadPartnerRecent={loadPartnerRecent} partnerRecent={partnerRecent} />
+          <HistoryBoard onOpen={(dk) => { setDateKey(dk); setTab("today"); }} target={target} profile={profile} partner={partner}
+            fetchRecent={fetchRecentAll} />
         ) : (
           <SettingsBoard profile={profile} target={target} setTarget={(t) => { setTarget(t); localStorage.setItem("hw_kcal_target", String(t)); }}
             onSwitchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
@@ -494,21 +488,7 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
       </Card>
 
       {/* Water */}
-      <Card className="!bg-gradient-to-br !from-cyan-500/10 !to-blue-500/5 !border-cyan-400/20">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-semibold">💧 Water</p>
-            <p className="text-xs text-cyan-300/80 mt-0.5">{day.waterGlasses} glasses (~{day.waterGlasses * 0.25}L)</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button onClick={() => set("waterGlasses", Math.max(0, day.waterGlasses - 1))}
-              className="w-11 h-11 rounded-full bg-white/10 border border-white/10 text-xl font-bold active:scale-90 transition">−</button>
-            <span className="w-10 text-center text-2xl font-extrabold">{day.waterGlasses}</span>
-            <button onClick={() => set("waterGlasses", Math.min(20, day.waterGlasses + 1))}
-              className="w-11 h-11 rounded-full bg-gradient-to-r from-lime-400 to-emerald-400 text-neutral-900 text-xl font-bold active:scale-90 transition">+</button>
-          </div>
-        </div>
-      </Card>
+      <WaterCard water={day.waterGlasses} onChange={(v) => set("waterGlasses", Math.max(0, Math.min(20, v)))} />
 
       {/* Sleep */}
       <Card>
@@ -630,7 +610,7 @@ function HabitsCard({ day, taskToggle, persist }) {
         {day.tasks.map((t, i) => (
           <button key={t.id || i} onClick={() => taskToggle(i)}
             className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border transition text-left ${t.done ? "bg-lime-400/10 border-lime-400/30" : "bg-black/20 border-white/5 hover:bg-white/5"}`}>
-            <span className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
+            <span key={t.done ? "d" : "u"} className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 hw-pop ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
               {t.done ? "✓" : ""}
             </span>
             <span className="text-lg">{t.emoji}</span>
@@ -644,13 +624,49 @@ function HabitsCard({ day, taskToggle, persist }) {
   );
 }
 
+// ---------- Water card (splash animation) ----------
+function WaterCard({ water, onChange }) {
+  const [splash, setSplash] = useState([]);
+  const bump = (dir) => {
+    onChange(water + dir);
+    if (dir > 0) {
+      const id = Date.now();
+      setSplash((s) => [...s.slice(-4), { id }]);
+      setTimeout(() => setSplash((s) => s.filter((x) => x.id !== id)), 950);
+    }
+  };
+  return (
+    <div className="hw-card p-4 !bg-gradient-to-br !from-cyan-500/10 !to-blue-500/5 !border-cyan-400/20 relative overflow-hidden">
+      <div className="flex items-center justify-between relative">
+        <div>
+          <p className="font-semibold">💧 Water</p>
+          <p className="text-xs text-cyan-300/80 mt-0.5">{water} glasses (~{(water * 0.25).toFixed(2)}L){water >= 8 ? " — goal done ✓" : `/8`}</p>
+        </div>
+        <div className="flex items-center gap-3 relative">
+          <button onClick={() => bump(-1)} disabled={water === 0}
+            className="w-11 h-11 rounded-full bg-white/10 border border-white/10 text-xl font-bold active:scale-90 transition disabled:opacity-30">−</button>
+          <span key={water} className="w-10 text-center text-2xl font-extrabold hw-pop inline-block">{water}</span>
+          <button onClick={() => bump(1)}
+            className="w-11 h-11 rounded-full bg-gradient-to-r from-lime-400 to-emerald-400 text-neutral-900 text-xl font-bold active:scale-90 transition">+</button>
+        </div>
+      </div>
+      {splash.map((s, i) => (
+        <span key={s.id} className="hw-rise absolute pointer-events-none text-xl"
+          style={{ right: `${68 + i * 10}px`, bottom: "34px" }}>💧</span>
+      ))}
+      <div className="mt-3 h-1.5 rounded-full bg-white/10 overflow-hidden">
+        <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-400 hw-barfill" style={{ width: `${Math.min(100, (water / 8) * 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 // ---------- Score (daily / weekly / monthly) ----------
 function ScoreCard({ day, dateKey, target, profile, aiOn }) {
   const [range, setRange] = useState("daily"); // daily | weekly | monthly
   const [docs, setDocs] = useState(null); // listRecent cache
   const [review, setReview] = useState("");
   const [reviewBusy, setReviewBusy] = useState(false);
-  useEffect(() => { setReview(""); }, [range, dateKey]);
   useEffect(() => {
     if (range === "daily") return;
     let alive = true;
@@ -670,12 +686,36 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
     const r = range === "weekly" ? weeklyScore(docs, target, dateKey) : monthlyScore(docs, target, dateKey);
     res = { score: r.score, parts: [], count: r.count };
   }
-  const verdict = res.score >= 80 ? "Zabardast! 🔥" : res.score >= 60 ? "Achha ja raha ho 💪" : res.score >= 40 ? "Thoda dheema hai 🌱" : "Kal improvement ✨";
 
-  const askAI = async () => {
-    setReviewBusy(true);
-    setReview(await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target));
+  // AI day-review — app kholte hi auto chalega (din+profile pe cache, repeat calls nahi)
+  const reviewKey = `hw_review_${profile}_${dateKey}`;
+  useEffect(() => {
+    const cached = localStorage.getItem(reviewKey);
     setReviewBusy(false);
+    setReview(cached || "");
+    if (!aiOn) return;
+    if (cached) return;
+    let alive = true;
+    (async () => {
+      setReviewBusy(true);
+      const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target);
+      if (!alive) return;
+      setReviewBusy(false);
+      setReview(txt);
+      if (!txt.startsWith("AI review offline")) localStorage.setItem(reviewKey, txt);
+    })();
+    return () => { alive = false; };
+  }, [reviewKey, aiOn]); // eslint-disable-line
+
+  const regenAI = async () => {
+    if (reviewBusy) return;
+    localStorage.removeItem(reviewKey);
+    setReview("");
+    setReviewBusy(true);
+    const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target);
+    setReviewBusy(false);
+    setReview(txt);
+    if (!txt.startsWith("AI review offline")) localStorage.setItem(reviewKey, txt);
   };
 
   return (
@@ -694,7 +734,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
               <div key={nm} className="flex items-center gap-2">
                 <span className="text-[11px] text-neutral-400 w-14 shrink-0">{nm}</span>
                 <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-lime-400 to-emerald-400" style={{ width: `${(val / max) * 100}%` }} />
+                  <div className="h-full rounded-full bg-gradient-to-r from-lime-400 to-emerald-400 hw-barfill" style={{ width: `${(val / max) * 100}%` }} />
                 </div>
                 <span className="text-[10px] text-neutral-500 w-10 text-right">{val}/{max}</span>
               </div>
@@ -702,11 +742,15 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
             : <p className="text-[11px] text-neutral-400">{range === "weekly" ? "Last 7 din" : "Is mahine"} ka average — {res.count} din ka data</p>}
         </div>
       </div>
-      <p className="text-xs text-lime-300/90 mt-2">{verdict}</p>
       {aiOn && range === "daily" && (
         review
-          ? <div className="mt-2 text-xs px-3 py-2 rounded-xl bg-lime-400/10 border border-lime-400/20 text-lime-200">{review}</div>
-          : <div className="mt-2"><Btn kind="ghost" className="!bg-white/5" onClick={askAI} disabled={reviewBusy}>{reviewBusy ? "🤖 AI soch raha…" : "✨ AI se day-review"}</Btn></div>
+          ? (
+            <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-lime-400/10 border border-lime-400/20 text-lime-200 flex items-start gap-2">
+              <span>🤖</span><span className="flex-1 whitespace-pre-wrap">{review}</span>
+              <button onClick={regenAI} disabled={reviewBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">↻</button>
+            </div>
+          )
+          : reviewBusy && <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-neutral-400 flex items-center gap-2"><span className="hw-spin inline-block">🤖</span> AI din ka review bana raha hai…</div>
       )}
       {range !== "daily" && !docs && <p className="text-xs text-neutral-500 mt-2">Score nikal raha hoon…</p>}
     </Card>
@@ -720,7 +764,8 @@ function ScoreRing({ score }) {
     <svg viewBox="0 0 64 64" className="w-20 h-20 shrink-0">
       <circle cx="32" cy="32" r="26" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="7" />
       <circle cx="32" cy="32" r="26" fill="none" stroke={score >= 80 ? "#a3e635" : score >= 60 ? "#34d399" : score >= 40 ? "#fbbf24" : "#f87171"}
-        strokeWidth="7" strokeLinecap="round" strokeDasharray={`${filled} ${c - filled}`} transform="rotate(-90 32 32)" />
+        strokeWidth="7" strokeLinecap="round" strokeDasharray={`${filled} ${c - filled}`} transform="rotate(-90 32 32)"
+        style={{ transition: "stroke-dasharray .7s cubic-bezier(.4,0,.2,1), stroke .4s ease" }} />
       <text x="32" y="36" textAnchor="middle" className="font-bold" fill="#fff" fontSize="17">{score}</text>
     </svg>
   );
@@ -849,60 +894,84 @@ function AiEntryBox({ day, persist, setAiOpen }) {
 }
 
 // ---------- History ----------
-function HistoryBoard({ recent, onOpen, target, profile, partner, loadPartnerRecent, partnerRecent }) {
+function HistoryBoard({ onOpen, target, profile, partner, fetchRecent }) {
   const [view, setView] = useState("me"); // me | partner
+  const [range, setRange] = useState("7"); // 7 | 30 | all
+  const [docs, setDocs] = useState(null); // full list for current who
   const who = view === "partner" ? partner : profile;
-  const cur = view === "partner" ? (partnerRecent || []) : (recent || []);
-  useEffect(() => { if (view === "partner") loadPartnerRecent?.(); }, [view, loadPartnerRecent]);
 
-  const viewScore = cur.length
-    ? Math.round(cur.reduce((s, d) => s + dailyScore(d, target).score, 0) / cur.length)
-    : 0;
+  useEffect(() => {
+    let alive = true;
+    setDocs(null);
+    fetchRecent(who).then((d) => alive && setDocs(d));
+    return () => { alive = false; };
+  }, [who, fetchRecent, onOpen]);
+
+  const todayK = todayKey();
+  const filtered = useMemo(() => {
+    if (!docs) return [];
+    if (range === "all") return docs;
+    const days = range === "7" ? 7 : 30;
+    const from = shiftDateKey(todayK, -(days - 1));
+    return docs.filter((d) => d.dateKey >= from && d.dateKey <= todayK);
+  }, [docs, range, todayK]);
+
+  const avg = filtered.length ? Math.round(filtered.reduce((s, d) => s + dailyScore(d, target).score, 0) / filtered.length) : 0;
 
   return (
     <div className="space-y-4 hw-fade-in">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1.5">
           <Chip on={view === "me"} onClick={() => setView("me")}>👤 {profile}</Chip>
           {partner && <Chip on={view === "partner"} onClick={() => setView("partner")}>💞 {partner}</Chip>}
         </div>
-        {cur.length > 0 && (
-          <span className={`text-xs px-2.5 py-1 rounded-full border font-semibold ${viewScore >= 70 ? "text-lime-300 bg-lime-400/10 border-lime-400/20" : viewScore >= 45 ? "text-amber-300 bg-amber-400/10 border-amber-400/20" : "text-red-300 bg-red-400/10 border-red-400/20"}`}>
-            📊 avg {viewScore}
-          </span>
-        )}
+        <div className="flex gap-1.5">
+          {[["7", "7 din"], ["30", "Mahine"], ["all", "Sab"]].map(([r, label]) => <Chip key={r} on={range === r} onClick={() => setRange(r)}>{label}</Chip>)}
+        </div>
       </div>
-      {!cur.length ? (
-        <div className="py-16 text-center text-neutral-400">{view === "partner" ? `${partner} ka data abhi nahi hai — wo bhi log kar rahi hogi 💪` : "Abhi koi data nahi — Today se shuru karo 💪"}</div>
-      ) : (
+      {docs === null && <div className="py-12 text-center text-neutral-400">Data nikal raha hoon…</div>}
+      {docs !== null && !filtered.length && (
+        <div className="py-16 text-center text-neutral-400">
+          {range === "all" ? (view === "partner" ? `${partner} ka data abhi nahi hai 🌱` : "Abhi koi data nahi — Today se shuru karo 💪") : `Is range me data nahi — "Sab" tab try karo`}
+        </div>
+      )}
+      {docs !== null && filtered.length > 0 && (
         <>
-          {weightListOf(cur).length > 1 && <WeightChart points={weightListOf(cur)} />}
+          <Card className="!bg-gradient-to-r !from-lime-500/10 !to-emerald-500/5 !border-lime-400/20">
+            <div className="flex items-center gap-4">
+              <ScoreRing score={avg} />
+              <div>
+                <p className="font-semibold text-sm">{range === "7" ? "Last 7 din" : range === "30" ? "Mahine" : "Poori history"} — {who}</p>
+                <p className="text-xs text-neutral-400 mt-0.5">{filtered.length} din · avg score {avg}/100</p>
+                <p className="text-[11px] text-neutral-500 mt-1">Har row pe us din ka score dikhta hai — tap karke us din ki puri detail kholo</p>
+              </div>
+            </div>
+          </Card>
+          {weightListOf(docs).length > 1 && <WeightChart points={weightListOf(docs)} />}
           <Card>
-            <p className="font-semibold mb-3">Last {cur.length} days — {who}</p>
             <div className="space-y-2">
-              {cur.map((d, i) => {
-                const t = dayTotal(d);
-                const s = dailyScore(d, target).score;
-                // sleep: pichhla doc (list DESC) iska sleepTime + iska wakeupTime
-                const prevDoc = cur[i + 1];
+              {filtered.map((d, i) => {
+                // sleep: list DESC hai — agla item (older) iska kal-raat doc hota hai
+                const prevDoc = filtered[i + 1] || docs[docs.findIndex((x) => x.id === d.id) + 1];
                 const sh = prevDoc ? sleepHours(prevDoc, d) : 0;
+                const s = dailyScore(d, target).score;
                 const sc = screenHours(d.screenOnTime);
                 return (
                   <button key={d.id} onClick={() => onOpen(d.dateKey)}
-                    className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-black/20 border border-white/5 hover:border-lime-400/40 hover:bg-white/5 transition text-left">
+                    className="w-full flex items-center gap-3 px-3 py-3 rounded-xl bg-black/20 border border-white/5 hover:border-lime-400/40 hover:bg-white/5 transition text-left hw-rowfade">
                     <div className="w-14 shrink-0">
                       <p className="text-sm font-semibold">{prettyDate(d.dateKey)}</p>
                       <p className="text-[10px] text-neutral-500">{d.dateKey.slice(5)}</p>
                     </div>
                     <div className="flex-1 flex items-center justify-between text-[11px] text-neutral-400 flex-wrap gap-x-3">
-                      <span>🔥 <b className="text-white">{t}</b>{target > 0 ? <span className={t > target ? "text-red-300" : "text-lime-300"}>/{target}</span> : null}</span>
+                      <span>🔥 <b className="text-white">{dayTotal(d)}</b>{target > 0 ? <span className={dayTotal(d) > target ? "text-red-300" : "text-lime-300"}>/{target}</span> : null}</span>
                       <span>💧 <b className="text-white">{d.waterGlasses}</b></span>
                       <span>✅ <b className="text-white">{(d.tasks || []).filter((x) => x.done).length}</b>/{(d.tasks || []).length}</span>
                       {sh > 0 && <span>😴 <b className="text-white">{sh}h</b></span>}
                       {sc > 0 && <span>📱 <b className="text-white">{sc}h</b></span>}
                       {d.weightKg > 0 && <span>⚖️ <b className="text-white">{d.weightKg}</b></span>}
                     </div>
-                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${s >= 70 ? "text-lime-300 bg-lime-400/10" : s >= 45 ? "text-amber-300 bg-amber-400/10" : "text-red-300 bg-red-400/10"}`}>{s}</span>
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full hw-pop ${s >= 70 ? "text-lime-300 bg-lime-400/10" : s >= 45 ? "text-amber-300 bg-amber-400/10" : "text-red-300 bg-red-400/10"}`}>{s}</span>
                   </button>
                 );
               })}
