@@ -1,5 +1,10 @@
-# HealthWish 💜 - Personal Couple Diet + Sleep App
-Personal use only. No Play Store. arm64 (OnePlus / Realme).
+# HealthWish 💚 - Personal Couple Diet + Sleep App
+Personal use only. Android app + PWA web app, same Firestore data.
+
+## 🌐 Web App (PWA)
+**[💚 Open HealthWish Web](https://shubhamkothar.github.io/healthwish/)**
+
+Chrome/Android → "Add to Home Screen" (📲 Install banner bhi aayega) · iOS Safari → Share → Add to Home Screen. Lifetime free (GitHub Pages). AI keysite ke Settings me save karo (browser me hi rehti hai).
 
 ## 📥 Direct Download (Final App)
 
