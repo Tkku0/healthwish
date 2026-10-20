@@ -2,13 +2,13 @@
 Personal use only. Android app + PWA web app, same Firestore data.
 
 ## 🌐 Web App (PWA)
-**[💚 Open HealthWish Web](https://shubhamkothar.github.io/healthwish/)**
+**[💚 Open HealthWish Web](https://tkku1.github.io/healthwish/)**
 
 Chrome/Android → "Add to Home Screen" (📲 Install banner bhi aayega) · iOS Safari → Share → Add to Home Screen. Lifetime free (GitHub Pages). AI keysite ke Settings me save karo (browser me hi rehti hai).
 
 ## 📥 Direct Download (Final App)
 
-**[⬇️ Download HealthWish.apk (v1.0 Final)](https://github.com/Shubhamkothar/healthwish/releases/download/v1.0-final/HealthWish.apk)**
+**[⬇️ Download HealthWish.apk (v1.0 Final)](https://github.com/Tkku1/healthwish/releases/download/v1.0-final/HealthWish.apk)**
 
 Phone me kholo > Install > Tkku/Shumu select karo > login karo. Bas!
 
