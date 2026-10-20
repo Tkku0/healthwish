@@ -50,6 +50,7 @@ function statusFor(doneTasks) {
     : n === 3 ? ["Almost there ✨", "from-emerald-500 to-teal-500"]
     : ["Perfect day! 🎉", "from-emerald-500 to-cyan-500"];
 }
+void statusFor;
 
 // ---------- tiny UI atoms ----------
 function Card({ className = "", children, ...p }) {
@@ -426,44 +427,37 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
   const [aiOpen, setAiOpen] = useState(false);
   const total = dayTotal(day);
   const pct = target ? Math.min(140, Math.round((total / target) * 100)) : 0;
-  const [st, grad] = statusFor(doneCount);
   const wakeMissing = !day.wakeupTime;
+
+  // "Slept" = KAL raat ka time → KAL ke doc me save hota hai (Android jaisa), isliye sleep history banti hai
+  const prevKey = shiftDateKey(dateKey, -1);
+  const [prevSleep, setPrevSleep] = useState("");
+  useEffect(() => {
+    let alive = true;
+    getDay(prevKey, profile).then((d) => alive && setPrevSleep(d.sleepTime || "")).catch(() => alive && setPrevSleep(""));
+    return () => { alive = false; };
+  }, [dateKey, profile]);
+  const setSleptOfPrev = async (v) => {
+    setPrevSleep(v);
+    try {
+      const prev = await getDay(prevKey, profile);
+      persist({ ...prev, sleepTime: v });
+    } catch {
+      const base = emptyDay(prevKey, profile);
+      persist({ ...base, sleepTime: v });
+    }
+  };
+  const nightHours = sleepHours({ sleepTime: prevSleep }, day);
 
   return (
     <div className="space-y-4 hw-fade-in">
       {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} />}
 
-      {/* Tasks progress */}
-      <Card className={`bg-gradient-to-r ${grad} !bg-none border-0 relative overflow-hidden`}
-        style={{ background: undefined }}>
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <p className="font-bold text-lg">{st}</p>
-            <p className="text-xs text-black/60 dark:text-neutral-400">{doneCount}/{day.tasks.length} habits done</p>
-          </div>
-          <div className="w-14 h-14 rounded-full border-4 border-white/15 flex items-center justify-center text-xl font-bold">
-            {Math.round((doneCount / Math.max(1, day.tasks.length)) * 100)}%
-          </div>
-        </div>
-      </Card>
+      {/* Score top pe */}
+      <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} />
 
       {/* Habits */}
-      <Card>
-        <p className="font-semibold mb-3">Daily Habits</p>
-        <div className="space-y-1.5">
-          {day.tasks.map((t, i) => (
-            <button key={t.id || i} onClick={() => taskToggle(i)}
-              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border transition text-left ${t.done ? "bg-lime-400/10 border-lime-400/30" : "bg-black/20 border-white/5 hover:bg-white/5"}`}>
-              <span className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
-                {t.done ? "✓" : ""}
-              </span>
-              <span className="text-lg">{t.emoji}</span>
-              <span className={`flex-1 text-sm ${t.done ? "line-through text-neutral-500" : ""}`}>{t.title}</span>
-              {t.time && <span className="text-xs text-neutral-500">{t.time}</span>}
-            </button>
-          ))}
-        </div>
-      </Card>
+      <HabitsCard day={day} taskToggle={taskToggle} persist={persist} />
 
       {/* Calories */}
       <Card>
@@ -516,22 +510,19 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
         </div>
       </Card>
 
-      {/* Score */}
-      <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} />
-
       {/* Sleep */}
       <Card>
         <p className="font-semibold mb-3">😴 Sleep</p>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <Field label="Woke up" type="time" value={day.wakeupTime} onChange={(e) => set("wakeupTime", e.target.value)} />
-          <Field label="Slept" type="time" value={day.sleepTime} onChange={(e) => set("sleepTime", e.target.value)} />
+          <Field label="Slept (kal raat)" type="time" value={prevSleep} onChange={(e) => setSleptOfPrev(e.target.value)} />
         </div>
         {wakeMissing ? (
           <p className="text-xs text-amber-300/90">Aaj ka wake-up time dalo ⏳</p>
-        ) : !day.sleepTime ? (
-          <p className="text-xs text-neutral-500">Kal raat ka sleep time log karo (kal ke card me) ⏳</p>
+        ) : !prevSleep ? (
+          <p className="text-xs text-neutral-500">Kal raat ka sleep time dalo ⏳</p>
         ) : (
-          <p className="text-xs text-lime-300 mb-2">😴 Sleep: {day.sleepTime} → {day.wakeupTime} (kal wali raat) — total History me</p>
+          <p className="text-xs text-lime-300 mb-2">😴 Sleep total: {nightHours > 0 ? `${nightHours} hours` : `${prevSleep} → ${day.wakeupTime}`} (kal wali raat, History me bhi dikhega)</p>
         )}
         <div className="flex gap-2 mb-3">
           {SLEEP_MOODS.map((m) => (
@@ -587,6 +578,69 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
       {mealEdit && <MealSheet meal={mealEdit} day={day} persist={persist} onClose={() => setMealEdit(null)} aiOn={aiOn} />}
     </div>
+  );
+}
+
+// ---------- Habits (custom add bhi) ----------
+function HabitsCard({ day, taskToggle, persist }) {
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [emoji, setEmoji] = useState("");
+  const [time, setTime] = useState("");
+  const add = () => {
+    const t = title.trim();
+    if (!t) return;
+    const task = {
+      id: `c_${Date.now().toString(36)}`,
+      title: t.slice(0, 40),
+      emoji: (emoji.trim() || "✨").slice(0, 3),
+      done: false,
+      isDefault: false,
+      time: time.trim() || "",
+    };
+    persist({ ...day, tasks: [...day.tasks, task] });
+    setTitle(""); setEmoji(""); setTime(""); setAdding(false);
+  };
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-semibold">Daily Habits</p>
+        <button onClick={() => setAdding(!adding)}
+          className={`w-8 h-8 rounded-full border flex items-center justify-center text-lg transition ${adding ? "bg-lime-400 border-lime-400 text-neutral-900 rotate-45" : "bg-white/5 border-white/15 text-lime-300 hover:bg-white/10"}`}
+          title="Custom habit add karo">＋</button>
+      </div>
+      {adding && (
+        <div className="mb-3 p-3 rounded-xl bg-black/30 border border-white/10 space-y-2.5">
+          <div className="flex gap-2">
+            <input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="😀" maxLength={3}
+              className="w-14 text-center bg-black/40 border border-white/10 rounded-xl px-2 py-2.5 text-lg outline-none focus:border-lime-400/60" />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
+              onKeyDown={(e) => e.key === "Enter" && add()}
+              placeholder="Nayi habit (e.g. 1 L paani extra)"
+              className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+          </div>
+          <div className="flex items-end gap-2">
+            <Field label="Time (optional)" value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 7:00 PM"
+              className="flex-1" />
+            <Btn onClick={add} disabled={!title.trim()}>Add</Btn>
+          </div>
+        </div>
+      )}
+      <div className="space-y-1.5">
+        {day.tasks.map((t, i) => (
+          <button key={t.id || i} onClick={() => taskToggle(i)}
+            className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border transition text-left ${t.done ? "bg-lime-400/10 border-lime-400/30" : "bg-black/20 border-white/5 hover:bg-white/5"}`}>
+            <span className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
+              {t.done ? "✓" : ""}
+            </span>
+            <span className="text-lg">{t.emoji}</span>
+            <span className={`flex-1 text-sm ${t.done ? "line-through text-neutral-500" : ""}`}>{t.title}</span>
+            <span className="text-[10px] text-neutral-600">{t.isDefault ? "" : "custom"}</span>
+            {t.time && <span className="text-xs text-neutral-500">{t.time}</span>}
+          </button>
+        ))}
+      </div>
+    </Card>
   );
 }
 

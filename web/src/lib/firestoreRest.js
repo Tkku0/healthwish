@@ -293,17 +293,7 @@ export async function listRecent(ownerName, limit = 30) {
   const q = {
     structuredQuery: {
       from: [{ collectionId: "days" }],
-      where: {
-        compositeFilter: {
-          op: "AND",
-          filters: [
-            { fieldFilter: { field: { fieldPath: "coupleId" }, op: "EQUAL", value: { stringValue: COUPLE_ID } } },
-            { fieldFilter: { field: { fieldPath: "ownerName" }, op: "EQUAL", value: { stringValue: ownerName } } },
-          ],
-        },
-      },
-      orderBy: [{ field: { fieldPath: "dateKey" }, direction: "DESCENDING" }],
-      limit,
+      limit: 300,
     },
   };
   try {
@@ -313,11 +303,17 @@ export async function listRecent(ownerName, limit = 30) {
       body: JSON.stringify(q),
     });
     const rows = await res.json();
+    const suffix = "_" + ownerName.toLowerCase();
     const out = [];
     for (const r of rows) {
-      if (r.document) out.push(parseDoc(r.document.name, r.document.fields));
+      if (!r.document) continue;
+      // legacy-safe filter: doc id "{date}_{profile-lower}" hi source of truth
+      const id = r.document.name.split("/").pop();
+      if (!id.endsWith(suffix)) continue;
+      out.push(parseDoc(r.document.name, r.document.fields));
     }
-    return out;
+    out.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
+    return out.slice(0, limit);
   } catch (e) {
     // Structured query block ho (rules) to seedha-doc fallback: aaj + kal
     const out = [];
