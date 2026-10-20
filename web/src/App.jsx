@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
-  PROFILE_PRESETS, cleanTasks,
+  PROFILE_PRESETS, cleanTasks, registerMembership,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
 } from "./lib/ai.js";
+import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
@@ -84,6 +85,7 @@ function Field({ label, ...p }) {
 
 // ---------- App ----------
 export default function App() {
+  const [auth, setAuth] = useState(() => getSession());
   const [profile, setProfile] = useState(() => localStorage.getItem("hw_profile") || "");
   const [lockHash, setLockHash] = useState(() => localStorage.getItem("hw_lock_hash") || "");
   const [unlocked, setUnlocked] = useState(false);
@@ -142,6 +144,22 @@ export default function App() {
 
   useEffect(() => { if (profile && tab === "history") reloadRecent(); }, [profile, tab, reloadRecent, dateKey]);
 
+  // session validate (token refresh) + couple-membership register
+  useEffect(() => {
+    if (!auth) return;
+    let alive = true;
+    (async () => {
+      try {
+        await getValidToken();
+        if (alive) setAuth(getSession());
+        await registerMembership(auth.email);
+      } catch {
+        if (alive) setAuth(getSession()); // logout() ke baad null ho sakta hai
+      }
+    })();
+    return () => { alive = false; };
+  }, [auth]); // eslint-disable-line
+
   // debounced autosave
   const persist = useCallback((next) => {
     setDay(next);
@@ -164,6 +182,7 @@ export default function App() {
   }, [reloadRecent, tab]);
 
   if (lockHash && !unlocked) return <LockScreen hash={lockHash} onOk={() => setUnlocked(true)} />;
+  if (!auth) return <AuthScreen onAuth={async (email) => { setAuth(getSession()); try { await registerMembership(email); } catch {} }} />;
   if (!profile) return <ProfileGate onPick={(p) => { localStorage.setItem("hw_profile", p); setProfile(p); }} installEvt={installEvt} />;
 
   const set = (k, v) => persist({ ...day, [k]: v });
@@ -209,7 +228,8 @@ export default function App() {
           <SettingsBoard profile={profile} target={target} setTarget={(t) => { setTarget(t); localStorage.setItem("hw_kcal_target", String(t)); }}
             onSwitchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
             lockHash={lockHash} setLock={(h) => { setLockHash(h); if (!h) localStorage.removeItem("hw_lock_hash"); }}
-            installEvt={installEvt} recent={recent} />
+            installEvt={installEvt} recent={recent}
+            auth={auth} onLogout={() => { authLogout(); setAuth(null); }} />
         )}
       </div>
       {nav}
@@ -266,6 +286,48 @@ function ProfileGate({ onPick, installEvt }) {
           className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
         <Btn onClick={() => custom.trim() && onPick(custom.trim())}>Go</Btn>
       </div>
+    </div>
+  );
+}
+
+// ---------- Auth gate ----------
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = useState("login"); // login | signup
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const go = async () => {
+    if (!email.trim() || pass.length < 6) { setErr(mode === "signup" ? "Password 6+ chars rakho" : "Email + password do"); return; }
+    setBusy(true); setErr("");
+    try {
+      await emailAuth(email, pass.trim(), mode === "signup");
+      await onAuth(email.trim().toLowerCase());
+    } catch (e) {
+      setErr(mode === "signup" && /EMAIL_EXISTS/i.test(e.message)
+        ? "Ye email registered hai — Login karke try karo"
+        : /INVALID_LOGIN/i.test(e.message) ? "Email/password galat hai" : e.message);
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="min-h-full flex flex-col items-center justify-center px-6 text-center">
+      <div className="text-6xl mb-4">💚</div>
+      <h1 className="text-3xl font-extrabold hw-gradient-text">HealthWish</h1>
+      <p className="text-sm text-neutral-400 mt-2 mb-8">{mode === "signup" ? "Naya account banao (couple join ke liye)" : "Apne account se login karo"}</p>
+      <div className="w-full max-w-xs space-y-3 text-left">
+        <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tum@example.com" autoFocus />
+        <Field label="Password" type="password" value={pass} onChange={(e) => setPass(e.target.value)}
+          placeholder={mode === "signup" ? "6+ characters" : "••••••"}
+          onKeyDown={(e) => e.key === "Enter" && go()} />
+        {err && <p className="text-xs text-red-300">{err}</p>}
+        <Btn className="w-full" onClick={go} disabled={busy}>{busy ? "…" : mode === "signup" ? "Sign Up ✓" : "Login →"}</Btn>
+        <button onClick={() => { setMode(mode === "signup" ? "login" : "signup"); setErr(""); }}
+          className="w-full text-xs text-lime-300/90 py-1">
+          {mode === "signup" ? "Already a member? Login" : "Pehli baar? Sign Up banao"}
+        </button>
+      </div>
+      {mode === "signup" && <p className="text-[11px] text-neutral-500 mt-6 max-w-xs">Couple ke dono partner apne email se signup karte hain — pehla member couple cred karta hai, doosre ka email doosre device pe whitelist hota hai.</p>}
     </div>
   );
 }
@@ -602,7 +664,7 @@ function WeightChart({ points }) {
 }
 
 // ---------- Settings ----------
-function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, setLock, installEvt, recent }) {
+function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, setLock, installEvt, recent, auth, onLogout }) {
   const ai = useMemo(getAI, []);
   const [preset, setPreset] = useState(Object.keys(PRESETS).find((k) => PRESETS[k][0] === localStorage.getItem("hw_ai_base")) || "");
   const [base, setBase] = useState(ai.baseUrl);
@@ -727,6 +789,14 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         <Btn kind="ghost" className="w-full" onClick={exportCsv}>⬇ Export CSV ({recent.length} days)</Btn>
         {csvMsg && <p className="text-xs text-lime-300 mt-2">{csvMsg}</p>}
         <p className="text-[11px] text-neutral-500 mt-3">Data Firestore (healthwish-6ca22) me sync hota hai — Android app wahi DB use karti hai, dono me same dikhega.</p>
+      </Card>
+
+      {/* Account */}
+      <Card>
+        <p className="font-semibold text-sm mb-2">👤 Account</p>
+        {auth && <p className="text-xs text-neutral-400 mb-2">{auth.email}</p>}
+        <Btn kind="danger" onClick={onLogout}>Logout</Btn>
+        <p className="text-[11px] text-neutral-500 mt-2">Logout ke baad data device se gaya nahi — sirf account band hota hai.</p>
       </Card>
 
       <Btn kind="ghost" className="w-full" onClick={onSwitchProfile}>⇅ Switch Profile ({profile})</Btn>

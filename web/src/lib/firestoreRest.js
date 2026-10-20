@@ -1,5 +1,6 @@
 // Firestore REST client — browser se seedha, koi SDK nahi (light + fast).
-// Rules abhi public hain (jaise Android app use karti hai), isliye sirf apiKey query param kaafi hai.
+// Auth: Firebase Auth token hota hai to Authorization header; warna (purana open-rules mode) bare request.
+import { getValidToken } from "./firebaseAuth.js";
 
 const PROJECT_ID = "healthwish-6ca22";
 const API_KEY = "AIzaSyCoi_9edMNxWd__lBHb0Kj2sPHOXDaHOiI";
@@ -113,7 +114,10 @@ function parseDoc(name, fields) {
 }
 
 async function fsFetch(url, opts) {
-  const res = await fetch(url, opts);
+  const token = await getValidToken();
+  const headers = Object.assign({}, (opts && opts.headers) || {});
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, Object.assign({}, opts, { headers }));
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
@@ -126,6 +130,71 @@ async function fsFetch(url, opts) {
 }
 
 // ---- API ----
+
+// Login ke baad: apne uid ko couple doc ke members me daal do (email whitelist pe depend).
+// couples/LOVE1 missing → create {members:[uid], partnerEmails:[own email]};
+// exists → agar uid member nahi to members=+uid (maan lo partner ne email whitelist kiya hoga).
+export async function registerMembership(email) {
+  const token = await getValidToken();
+  if (!token || !email) return;
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  let doc = null;
+  try {
+    const res = await fsFetch(url);
+    doc = await res.json();
+  } catch {
+    doc = null; // 404 ya (rules ke baad) 403 — dono me create koshiysh
+  }
+  let members = [];
+  let partnerEmails = [];
+  if (doc && doc.fields) {
+    members = (doc.fields.members && doc.fields.members.values || []).map((v) => v.stringValue).filter(Boolean);
+    partnerEmails = (doc.fields.partnerEmails && doc.fields.partnerEmails.values || []).map((v) => v.stringValue).filter(Boolean);
+  }
+  if (members.includes(emailToUidHint())) return; // uid already member
+  // token me se actual uid chahiye
+  try {
+    const uid = await authUid();
+    if (members.includes(uid)) return;
+    members.push(uid);
+    if (!partnerEmails.includes(email.toLowerCase())) partnerEmails.push(email.toLowerCase());
+    const fields = {
+      members: { arrayValue: { values: members.map((m) => ({ stringValue: m })) } },
+      partnerEmails: { arrayValue: { values: partnerEmails.map((m) => ({ stringValue: m })) } },
+    };
+    if (doc) {
+      const mask = ["members", "partnerEmails"].map((f) => `updateMask.fieldPaths=${f}`).join("&");
+      await fsFetch(`${url}&${mask}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+    } else {
+      // fixed-ID doc create — PATCH (bina updateMask) existing doc create/replace karta hai
+      await fsFetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fields }),
+      });
+    }
+  } catch {
+    // rules strict bane to bhi web chalega agar pehle se member tha — chup raho
+  }
+}
+
+let cachedUid = null;
+function emailToUidHint() {
+  return cachedUid || "";
+}
+
+async function authUid() {
+  const token = await getValidToken();
+  if (!token) throw new Error("no auth");
+  const payload = JSON.parse(atob(token.split(".")[1]));
+  cachedUid = payload.user_id || payload.sub;
+  return cachedUid;
+}
+
 export async function getDay(dateKey, ownerName) {
   const id = docIdFor(dateKey, ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;
