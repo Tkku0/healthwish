@@ -44,6 +44,11 @@ export function emptyDay(dateKey, ownerName) {
     dateKey,
     breakfast: "", lunch: "", dinner: "", snacks: "",
     breakfastKcal: 0, lunchKcal: 0, dinnerKcal: 0, snacksKcal: 0,
+    // macros (g) per meal — AI estimate / manual
+    breakfastProtein: 0, breakfastCarbs: 0, breakfastFat: 0, breakfastFiber: 0, breakfastSugar: 0,
+    lunchProtein: 0, lunchCarbs: 0, lunchFat: 0, lunchFiber: 0, lunchSugar: 0,
+    dinnerProtein: 0, dinnerCarbs: 0, dinnerFat: 0, dinnerFiber: 0, dinnerSugar: 0,
+    snacksProtein: 0, snacksCarbs: 0, snacksFat: 0, snacksFiber: 0, snacksSugar: 0,
     waterGlasses: 0,
     wakeupTime: "", sleepTime: "", sleepMood: "", dayMood: "",
     dayNote: "",
@@ -108,8 +113,10 @@ function parseDoc(name, fields) {
       time: String(t.time ?? ""),
     }));
   merged.weightKg = Number(merged.weightKg) || 0;
-  for (const m of ["breakfastKcal", "lunchKcal", "dinnerKcal", "snacksKcal", "waterGlasses"])
-    merged[m] = Number(merged[m]) || 0;
+  for (const k of Object.keys(merged)) {
+    if (/(Protein|Carbs?|Fat|Fiber|Sugar)$/.test(k) || /Kcal$/.test(k) || k === "waterGlasses")
+      merged[k] = Number(merged[k]) || 0;
+  }
   return merged;
 }
 

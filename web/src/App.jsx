@@ -5,7 +5,7 @@ import {
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
-  reviewScore, storeShared, usingShared,
+  estimateMealNutrition, reviewScore, storeShared, usingShared,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours } from "./lib/score.js";
@@ -37,6 +37,18 @@ function prettyDate(dk) {
 }
 function dayTotal(d) {
   return (d.breakfastKcal || 0) + (d.lunchKcal || 0) + (d.dinnerKcal || 0) + (d.snacksKcal || 0);
+}
+const MACRO_FIELDS = [["Protein", "protein"], ["Carbs", "carbs"], ["Fat", "fat"], ["Fiber", "fiber"], ["Sugar", "sugar"]];
+function dayMacros(d) {
+  const t = { protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
+  for (const m of ["breakfast", "lunch", "dinner", "snacks"]) {
+    for (const [F, K] of MACRO_FIELDS) t[K] += Number(d[m + F]) || 0;
+  }
+  return t;
+}
+function macroTargets() {
+  try { return JSON.parse(localStorage.getItem("hw_macro_targets") || "null") || { p: 60, c: 250, f: 70 }; }
+  catch { return { p: 60, c: 250, f: 70 }; }
 }
 async function sha256(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -434,6 +446,8 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
   const [aiOpen, setAiOpen] = useState(false);
   const total = dayTotal(day);
   const pct = target ? Math.min(140, Math.round((total / target) * 100)) : 0;
+  const mTot = dayMacros(day);
+  const mt = macroTargets();
   const wakeMissing = !day.wakeupTime;
 
   return (
@@ -468,6 +482,22 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
             <div className={`h-full rounded-full transition-all ${pct > 110 ? "bg-red-400" : pct > 85 ? "bg-amber-400" : "bg-gradient-to-r from-lime-400 to-emerald-400"}`} style={{ width: `${Math.min(100, pct)}%` }} />
           </div>
         )}
+        {/* Macros (g) — protein/carbs/fat daily bars */}
+        <div className="pt-3 border-t border-white/10 space-y-2.5 mb-4">
+          <div className="flex items-center justify-between text-[11px] text-neutral-400">
+            <span className="font-semibold text-neutral-300">Macros (g)</span>
+            <span className="tabular-nums">🥩 {mTot.protein} · 🍞 {mTot.carbs} · 🧈 {mTot.fat} · 🌾 {mTot.fiber}g</span>
+          </div>
+          {[["🥩 Protein", mTot.protein, mt.p, "from-lime-400 to-emerald-400"], ["🍞 Carbs", mTot.carbs, mt.c, "from-amber-400 to-yellow-400"], ["🧈 Fat", mTot.fat, mt.f, "from-orange-400 to-red-400"]].map(([label, val, tgt, grad]) => (
+            <div key={label} className="flex items-center gap-2.5">
+              <span className="text-[11px] text-neutral-400 w-18 shrink-0">{label}</span>
+              <div className="flex-1 h-2 rounded-full bg-white/10 overflow-hidden">
+                <div className={`h-full rounded-full hw-barfill bg-gradient-to-r ${grad}`} style={{ width: `${Math.min(100, tgt ? Math.round((val / tgt) * 100) : val)}%` }} />
+              </div>
+              <span className="text-[10px] text-neutral-500 w-16 text-right tabular-nums">{val}<span className="text-neutral-600">/{tgt}</span></span>
+            </div>
+          ))}
+        </div>
         {aiOpen && <AiEntryBox day={day} dateKey={dateKey} persist={persist} setAiOpen={setAiOpen} />}
         <div className="grid grid-cols-2 gap-2">
           {MEALS.map(([k, label, icon]) => (
@@ -478,6 +508,15 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
                 <span className={`text-xs font-bold ${(day[k + "Kcal"] || 0) > 0 ? "text-lime-300" : "text-neutral-600"}`}>{day[k] || day[k + "Kcal"] ? `🔥 ${day[k + "Kcal"] || 0}` : "+"}</span>
               </div>
               <p className="text-xs text-neutral-400 mt-1.5 whitespace-pre-wrap break-words leading-snug">{day[k] || "kuch nahi"}</p>
+              {(day[k + "Kcal"] > 0 || (day[k + "Protein"] || 0) > 0) && (
+                <p className="flex gap-2 flex-wrap mt-1.5 text-[10px] text-neutral-500 tabular-nums">
+                  {day[k + "Kcal"] > 0 && <span className="text-lime-300/90 font-semibold">🔥 {day[k + "Kcal"]}</span>}
+                  {(day[k + "Protein"] || 0) > 0 && <span>🥩 {day[k + "Protein"]}g</span>}
+                  {(day[k + "Carbs"] || 0) > 0 && <span>🍞 {day[k + "Carbs"]}g</span>}
+                  {(day[k + "Fat"] || 0) > 0 && <span>🧈 {day[k + "Fat"]}g</span>}
+                  {(day[k + "Fiber"] || 0) > 0 && <span>🌾 {day[k + "Fiber"]}g</span>}
+                </p>
+              )}
             </button>
           ))}
         </div>
@@ -778,6 +817,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
 
   // AI day-review — app kholte hi auto chalega (din+profile pe cache, repeat calls nahi)
   const reviewKey = `hw_review_${profile}_${dateKey}`;
+  const dmTot = dayMacros(day);
   useEffect(() => {
     const cached = localStorage.getItem(reviewKey);
     setReviewBusy(false);
@@ -787,7 +827,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
     let alive = true;
     (async () => {
       setReviewBusy(true);
-      const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target);
+      const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day), macros: dmTot }, target);
       if (!alive) return;
       setReviewBusy(false);
       setReview(txt);
@@ -801,7 +841,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
     localStorage.removeItem(reviewKey);
     setReview("");
     setReviewBusy(true);
-    const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day) }, target);
+    const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day), macros: dmTot }, target);
     setReviewBusy(false);
     setReview(txt);
     if (!txt.startsWith("AI review offline")) localStorage.setItem(reviewKey, txt);
@@ -896,25 +936,35 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
   const [kcal, setKcal] = useState(day[meal + "Kcal"] || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [preview, setPreview] = useState(null); // {protein,...} estimate preview
   const save = async () => {
-    let k = Math.max(0, Number(kcal) || 0);
-    // kcal khali + AI on → save se pehle khud count
-    if (!k && (text || "").trim() && aiOn) {
-      setBusy(true); setErr("");
-      const res = await estimateKcal(text, (m) => setErr(m === "kcal samajh nahi aaya" ? "" : m));
-      if (typeof res === "number") k = res;
-      else if (res && res.error) { setBusy(false); setErr("AI count nahi kar paya — manually daalo ya Save dabao"); return; }
-      setBusy(false);
+    setBusy(true); setErr("");
+    let nut = preview;
+    // kcal khali ya macros missing + AI on → save se pehle full macro count
+    if (aiOn && (text || "").trim() && (!Number(kcal) || !nut)) {
+      const res = await estimateMealNutrition(text, () => {});
+      if (res && !res.error) nut = res;
+      else if (!Number(kcal)) {
+        setBusy(false);
+        setErr("AI count nahi kar paya — kcal manually daalo ya phir Save dabao");
+        return;
+      }
     }
-    persist({ ...day, [meal]: text.trim(), [meal + "Kcal"]: k });
+    const patch = {
+      [meal]: text.trim(),
+      [meal + "Kcal"]: Math.max(0, Number(kcal) || (nut && nut.kcal) || 0),
+    };
+    for (const [F, K] of MACRO_FIELDS) patch[meal + F] = nut ? (nut[K] || 0) : (day[meal + F] || 0);
+    persist({ ...day, ...patch });
+    setBusy(false);
     onClose();
   };
   const aiEstimate = async () => {
     if (!(text || "").trim()) { setErr("Pehle khaana likho 🙂"); return; }
     setBusy(true); setErr("");
-    const res = await estimateKcal(text, (m) => setErr(m));
-    if (res && typeof res === "object" && res.error) setErr(res.error);
-    else setKcal(res);
+    const res = await estimateMealNutrition(text, (m) => setErr(m));
+    if (res && !res.error) { setKcal(res.kcal || ""); setPreview(res); }
+    else { setErr((res && res.error) || "estimate fail"); }
     setBusy(false);
   };
   return (
@@ -927,15 +977,21 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus
           placeholder="kya khaya? (2 roti + dal + sabzi)"
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
-        {aiOn && (
-          <Btn kind="ghost" className="!bg-lime-400/10 !border-lime-400/30 !text-lime-300 w-full" onClick={aiEstimate} disabled={busy}>
-            {busy ? "🤖 AI count kar raha hai…" : "✨ AI se kcal nikaalo"}
-          </Btn>
+        {preview && (
+          <div className="flex items-center gap-2 flex-wrap text-[11px] px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-neutral-300">
+            <span className="font-bold text-lime-300">AI estimate:</span>
+            <span>🔥 {preview.kcal}</span>
+            <span>🥩 {preview.protein}g</span>
+            <span>🍞 {preview.carbs}g</span>
+            <span>🧈 {preview.fat}g</span>
+            <span>🌾 {preview.fiber}g</span>
+            <span>🍬 {preview.sugar}g</span>
+          </div>
         )}
         {err && <p className="text-xs text-red-300">{err}</p>}
         <div className="flex items-end gap-2">
           <Field label={`Calories (kcal)${aiOn ? " — khali chhodo to AI khud count karega" : ""}`} type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
-          <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖…" : "Save"}</Btn>
+          <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖 counting…" : "Save"}</Btn>
         </div>
       </div>
     </div>
@@ -959,7 +1015,11 @@ function AiEntryBox({ day, persist, setAiOpen }) {
   const save = () => {
     const nextKcal = day[meal + "Kcal"] + preview.total;
     const nextText = day[meal] ? `${day[meal]} + ${text.trim()}` : text.trim();
-    persist({ ...day, [meal]: nextText, [meal + "Kcal"]: nextKcal });
+    const patch = { [meal]: nextText, [meal + "Kcal"]: nextKcal };
+    if (preview.macros) {
+      for (const [F, K] of MACRO_FIELDS) patch[meal + F] = (day[meal + F] || 0) + (preview.macros[K] || 0);
+    }
+    persist({ ...day, ...patch });
     setText(""); setPreview(null); setAiOpen(false);
   };
   return (
@@ -983,6 +1043,15 @@ function AiEntryBox({ day, persist, setAiOpen }) {
               <div key={i} className="flex justify-between"><span>• {it.label}</span><span className="text-lime-300 font-semibold">{it.kcal}</span></div>
             ))}
             <div className="flex justify-between font-bold text-white pt-1 border-t border-white/10"><span>Total</span><span className="text-lime-400">{preview.total} kcal</span></div>
+            {preview.macros && (preview.macros.protein || preview.macros.carbs || preview.macros.fat) > 0 && (
+              <div className="flex gap-2 flex-wrap pt-1 text-[10px] text-neutral-400 tabular-nums">
+                <span>🥩 {preview.macros.protein}g</span>
+                <span>🍞 {preview.macros.carbs}g</span>
+                <span>🧈 {preview.macros.fat}g</span>
+                {(preview.macros.fiber || 0) > 0 && <span>🌾 {preview.macros.fiber}g</span>}
+                {(preview.macros.sugar || 0) > 0 && <span>🍬 {preview.macros.sugar}g</span>}
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <Btn className="flex-1" onClick={save}>Save ✓</Btn>
@@ -1066,6 +1135,7 @@ function HistoryBoard({ onOpen, target, profile, partner, fetchRecent }) {
                     </div>
                     <div className="flex-1 flex items-center justify-between text-[11px] text-neutral-400 flex-wrap gap-x-3">
                       <span>🔥 <b className="text-white">{dayTotal(d)}</b>{target > 0 ? <span className={dayTotal(d) > target ? "text-red-300" : "text-lime-300"}>/{target}</span> : null}</span>
+                      {dayMacros(d).protein > 0 && <span>🥩 <b className="text-white">{dayMacros(d).protein}g</b></span>}
                       <span>💧 <b className="text-white">{d.waterGlasses}</b></span>
                       <span>✅ <b className="text-white">{(d.tasks || []).filter((x) => x.done).length}</b>/{(d.tasks || []).length}</span>
                       {sh > 0 && <span>😴 <b className="text-white">{sh}h</b></span>}
@@ -1134,6 +1204,7 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   const [pinMsg, setPinMsg] = useState("");
   const [csvMsg, setCsvMsg] = useState("");
   const [shareMsg, setShareMsg] = useState("");
+  const [mTargets, setMTargets] = useState(() => macroTargets());
 
   const applyPreset = (name) => {
     setPreset(name);
@@ -1160,9 +1231,12 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   };
   const exportCsv = () => {
     if (!recent.length) { setCsvMsg("Pehle kuch log karo"); return; }
-    const cols = ["date", "breakfast", "breakfast_kcal", "lunch", "lunch_kcal", "dinner", "dinner_kcal", "snacks", "snacks_kcal", "total_kcal", "water_glasses", "wakeup", "sleep", "weight_kg", "note"];
+    const cols = ["date", "breakfast", "breakfast_kcal", "lunch", "lunch_kcal", "dinner", "dinner_kcal", "snacks", "snacks_kcal", "total_kcal", "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g", "water_glasses", "wakeup", "sleep", "weight_kg", "note"];
     const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-    const rows = recent.map((d) => [d.dateKey, d.breakfast, d.breakfastKcal, d.lunch, d.lunchKcal, d.dinner, d.dinnerKcal, d.snacks, d.snacksKcal, dayTotal(d), d.waterGlasses, d.wakeupTime, d.sleepTime, d.weightKg, d.dayNote].map(q).join(","));
+    const rows = recent.map((d) => {
+      const dm = dayMacros(d);
+      return [d.dateKey, d.breakfast, d.breakfastKcal, d.lunch, d.lunchKcal, d.dinner, d.dinnerKcal, d.snacks, d.snacksKcal, dayTotal(d), dm.protein, dm.carbs, dm.fat, dm.fiber, dm.sugar, d.waterGlasses, d.wakeupTime, d.sleepTime, d.weightKg, d.dayNote].map(q).join(",");
+    });
     const blob = new Blob([`\uFEFF${[cols.join(","), ...rows].join("\n")}`], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -1241,6 +1315,17 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
             placeholder="e.g. 2000" className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
           <Btn onClick={() => target > 0 && setStatus(`Target ${target} kcal ✓`)}>Save</Btn>
         </div>
+        <p className="font-semibold text-sm mb-2 mt-4">🥩 Macro targets (g/day)</p>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          {[["p", "Protein"], ["c", "Carbs"], ["f", "Fat"]].map(([k, label]) => (
+            <label key={k} className="block">
+              <span className="text-[10px] text-neutral-400 mb-1 block">{label}</span>
+              <input type="number" value={mTargets[k]} onChange={(e) => setMTargets({ ...mTargets, [k]: Number(e.target.value.replace(/\D/g, "").slice(0, 4)) })}
+                className="w-full bg-black/30 border border-white/10 rounded-xl px-2.5 py-2 text-sm text-center outline-none focus:border-lime-400/60" />
+            </label>
+          ))}
+        </div>
+        <Btn kind="ghost" className="w-full" onClick={() => { localStorage.setItem("hw_macro_targets", JSON.stringify(mTargets)); setPinMsg(`Macro targets saved ✓`); }}>Save macro targets</Btn>
       </Card>
 
       {/* Security */}

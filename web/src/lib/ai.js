@@ -143,6 +143,36 @@ async function aiCall(cfg, system, user) {
 
 // ---- public helpers ----
 
+// Meal text -> full macro estimate {kcal, protein, carbs, fat, fiber, sugar}
+export async function estimateMealNutrition(text, onErr) {
+  const cfg = getAI();
+  const system = cfg.prompt +
+    "\n\nReply strictly as JSON: {\"kcal\": <single integer total>, \"protein\": <grams int>, " +
+    "\"carbs\": <grams int>, \"fat\": <grams int>, \"fiber\": <grams int>, \"sugar\": <grams int>} — " +
+    "macros for the described food only, realistic Indian portions, best single integer estimates.";
+  try {
+    const out = await aiCall(cfg, system, text);
+    const j = extractJsonObject(out);
+    if (j && typeof j.kcal !== "undefined") {
+      const num = (v) => Math.max(0, Math.round(Number(v) || 0));
+      return {
+        kcal: num(j.kcal),
+        protein: num(j.protein),
+        carbs: num(j.carbs),
+        fat: num(j.fat),
+        fiber: num(j.fiber),
+        sugar: num(j.sugar),
+      };
+    }
+    const m = out.match(/\d{1,5}/);
+    if (m) return { kcal: parseInt(m[0], 10), protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
+    throw new Error("macro samajh nahi aaya");
+  } catch (e) {
+    onErr && onErr(e.message);
+    return { error: e.message };
+  }
+}
+
 // Meal text -> total kcal (single integer JSON {kcal})
 export async function estimateKcal(text, onErr) {
   const cfg = getAI();
@@ -166,8 +196,9 @@ export async function parseFoodInput(input) {
   const cfg = getAI();
   const system =
     cfg.prompt +
-    '\n\nReply strictly as JSON: {"items":[{"label":"food","kcal":int}],"total":int}. ' +
-    "label in the user's language, short. total = sum of items.";
+    '\n\nReply strictly as JSON: {"items":[{"label":"food","kcal":int}],"total":int,' +
+    '"protein":int,"carbs":int,"fat":int,"fiber":int,"sugar":int}. ' +
+    "label in the user's language, short. total = sum of items kcal; macro top-level keys = grams for the whole meal.";
   const out = await aiCall(cfg, system, input);
   const j = extractJsonObject(out);
   if (!j || !Array.isArray(j.items)) throw new Error("AI samajh nahi paya — thoda clear likho 🙂");
@@ -177,7 +208,15 @@ export async function parseFoodInput(input) {
   let total = Math.round(Number(j.total) || 0);
   if (!total) total = items.reduce((s, it) => s + it.kcal, 0);
   if (!items.length) throw new Error("koi item nahi mila");
-  return { items, total };
+  const num = (v) => Math.max(0, Math.round(Number(v) || 0));
+  return {
+    items,
+    total,
+    macros: {
+      protein: num(j.protein), carbs: num(j.carbs), fat: num(j.fat),
+      fiber: num(j.fiber), sugar: num(j.sugar),
+    },
+  };
 }
 
 export async function testAI() {
@@ -201,6 +240,7 @@ export async function reviewScore(day, scoreRes, target) {
   const user = JSON.stringify({
     kcalTarget: target,
     totalKcal: scoreRes.total,
+    macros: scoreRes.macros || null,
     waterGlasses: day.waterGlasses,
     tasksDone: ((day.tasks || []).filter((t) => t.done).length) + "/" + (day.tasks || []).length,
     screenHours: h ? parseFloat(h[0]) : null,
