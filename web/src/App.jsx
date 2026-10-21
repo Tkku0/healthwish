@@ -228,6 +228,7 @@ export default function App() {
         <Header profile={profile} switchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
           dateKey={dateKey} onPrev={() => setDateKey(shiftDateKey(dateKey, -1))}
           onNext={() => dateKey !== todayKey() && setDateKey(shiftDateKey(dateKey, 1))}
+          onPickDate={(dk) => setDateKey(dk)}
           syncState={syncState} onHome={() => setDateKey(todayKey())} />
         {loadErr && <div className="mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{loadErr}</div>}
         {!day ? (
@@ -391,7 +392,13 @@ function CoupleCard({ email }) {
 }
 
 // ---------- Header ----------
-function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, onHome }) {
+function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, onHome, onPickDate }) {
+  const dateRef = useRef(null);
+  const openPicker = () => {
+    if (!dateRef.current) return;
+    try { dateRef.current.showPicker && dateRef.current.showPicker(); }
+    catch { dateRef.current.click && dateRef.current.click(); }
+  };
   return (
     <div className="flex items-center justify-between mb-4">
       <button onClick={switchProfile} title="Profile switch"
@@ -403,10 +410,16 @@ function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, on
         <span className="text-neutral-500 text-xs">⇅</span>
       </button>
       <div className="flex items-center gap-1">
-        <button onClick={onPrev} className="w-9 h-9 rounded-full bg-white/5 border border-white/10 hover:bg-white/10">←</button>
-        <button onClick={onHome} className="px-3 py-2 text-sm font-semibold min-w-24">{prettyDate(dateKey)}</button>
+        <button onClick={onPrev} className="w-10 h-10 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-90 transition">←</button>
+        <button onClick={openPicker} title="Date picker"
+          className="px-4 py-2.5 text-sm font-extrabold min-w-28 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition">
+          {prettyDate(dateKey)}
+          <input ref={dateRef} type="date" value={dateKey} max={todayKey()} tabIndex={-1}
+            onChange={(e) => e.target.value && onPickDate && onPickDate(e.target.value)}
+            className="absolute opacity-0 pointer-events-none w-0 h-0" aria-hidden="true" />
+        </button>
         <button onClick={onNext} disabled={dateKey === todayKey()}
-          className="w-9 h-9 rounded-full bg-white/5 border border-white/10 disabled:opacity-25 hover:bg-white/10">→</button>
+          className="w-10 h-10 rounded-full bg-white/5 border border-white/10 disabled:opacity-25 hover:bg-white/10 active:scale-90 transition">→</button>
       </div>
       <span className={`text-xs ${syncState === "saving" ? "text-amber-300" : syncState === "saved" ? "text-lime-400" : "text-neutral-600"}`}>
         {syncState === "saving" ? "☁ Syncing…" : syncState === "saved" ? "✓ Synced" : "☁"}
@@ -423,32 +436,15 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
   const pct = target ? Math.min(140, Math.round((total / target) * 100)) : 0;
   const wakeMissing = !day.wakeupTime;
 
-  // "Slept" = KAL raat ka time → KAL ke doc me save hota hai (Android jaisa), isliye sleep history banti hai
-  const prevKey = shiftDateKey(dateKey, -1);
-  const [prevSleep, setPrevSleep] = useState("");
-  useEffect(() => {
-    let alive = true;
-    getDay(prevKey, profile).then((d) => alive && setPrevSleep(d.sleepTime || "")).catch(() => alive && setPrevSleep(""));
-    return () => { alive = false; };
-  }, [dateKey, profile]);
-  const setSleptOfPrev = async (v) => {
-    setPrevSleep(v);
-    try {
-      const prev = await getDay(prevKey, profile);
-      persist({ ...prev, sleepTime: v });
-    } catch {
-      const base = emptyDay(prevKey, profile);
-      persist({ ...base, sleepTime: v });
-    }
-  };
-  const nightHours = sleepHours({ sleepTime: prevSleep }, day);
-
   return (
     <div className="space-y-4 hw-fade-in">
       {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} />}
 
       {/* Score top pe */}
       <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} />
+
+      {/* Sleep — score ke turant niche */}
+      <SleepCard day={day} dateKey={dateKey} set={set} persist={persist} profile={profile} />
 
       {/* Habits */}
       <HabitsCard day={day} taskToggle={taskToggle} persist={persist} />
@@ -489,34 +485,6 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
       {/* Water */}
       <WaterCard water={day.waterGlasses} onChange={(v) => set("waterGlasses", Math.max(0, Math.min(20, v)))} />
-
-      {/* Sleep */}
-      <Card>
-        <p className="font-semibold mb-3">😴 Sleep</p>
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <Field label="Woke up" type="time" value={day.wakeupTime} onChange={(e) => set("wakeupTime", e.target.value)} />
-          <Field label="Slept (kal raat)" type="time" value={prevSleep} onChange={(e) => setSleptOfPrev(e.target.value)} />
-        </div>
-        {wakeMissing ? (
-          <p className="text-xs text-amber-300/90">Aaj ka wake-up time dalo ⏳</p>
-        ) : !prevSleep ? (
-          <p className="text-xs text-neutral-500">Kal raat ka sleep time dalo ⏳</p>
-        ) : (
-          <p className="text-xs text-lime-300 mb-2">😴 Sleep total: {nightHours > 0 ? `${nightHours} hours` : `${prevSleep} → ${day.wakeupTime}`} (kal wali raat, History me bhi dikhega)</p>
-        )}
-        <div className="flex gap-2 mb-3">
-          {SLEEP_MOODS.map((m) => (
-            <button key={m} onClick={() => set("sleepMood", m)}
-              className={`flex-1 py-2 rounded-xl text-xl border transition ${day.sleepMood === m ? "bg-lime-400/15 border-lime-400/50" : "bg-black/20 border-white/5"}`}>{m}</button>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          {DAY_MOODS.map((m) => (
-            <button key={m} onClick={() => set("dayMood", m)}
-              className={`flex-1 py-2 rounded-xl text-xl border transition ${day.dayMood === m ? "bg-lime-400/15 border-lime-400/50" : "bg-black/20 border-white/5"}`}>{m}</button>
-          ))}
-        </div>
-      </Card>
 
       {/* Screen time */}
       <Card>
@@ -561,12 +529,102 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
   );
 }
 
-// ---------- Habits (custom add bhi) ----------
+// ---------- Sleep card (self-contained, score ke turant niche) ----------
+function SleepCard({ day, dateKey, set, persist, profile }) {
+  const prevKey = shiftDateKey(dateKey, -1);
+  const [prevSleep, setPrevSleep] = useState("");
+  useEffect(() => {
+    let alive = true;
+    getDay(prevKey, profile).then((d) => alive && setPrevSleep(d.sleepTime || "")).catch(() => alive && setPrevSleep(""));
+    return () => { alive = false; };
+  }, [dateKey, profile]);
+  // "Slept" = KAL raat ka time → KAL ke doc me save (Android jaisa), tabhi per-day sleep banta hai
+  const setSleptOfPrev = async (v) => {
+    setPrevSleep(v);
+    try {
+      const prev = await getDay(prevKey, profile);
+      persist({ ...prev, sleepTime: v });
+    } catch {
+      const base = emptyDay(prevKey, profile);
+      persist({ ...base, sleepTime: v });
+    }
+  };
+  const nightHours = sleepHours({ sleepTime: prevSleep }, day);
+  return (
+    <Card>
+      <p className="font-semibold mb-3">😴 Sleep</p>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <Field label="Woke up" type="time" value={day.wakeupTime} onChange={(e) => set("wakeupTime", e.target.value)} />
+        <Field label="Slept (kal raat)" type="time" value={prevSleep} onChange={(e) => setSleptOfPrev(e.target.value)} />
+      </div>
+      {!day.wakeupTime ? (
+        <p className="text-xs text-amber-300/90">Aaj ka wake-up time dalo ⏳</p>
+      ) : !prevSleep ? (
+        <p className="text-xs text-neutral-500">Kal raat ka sleep time dalo ⏳</p>
+      ) : (
+        <p className="text-xs text-lime-300">😴 Sleep total: <b>{nightHours > 0 ? `${nightHours} hours` : `${prevSleep} → ${day.wakeupTime}`}</b> (kal wali raat · History me bhi dikhega)</p>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Habits (custom add + time/duration + edit) ----------
+const TASK_EMOJIS = ["✨", "🚶", "💪", "🧘", "💧", "🏃", "🥗", "📚", "😴", "🎸", "🧠", "☀️"];
+
+function TaskEditSheet({ task, onSave, onClose, onDelete }) {
+  const [title, setTitle] = useState(task.title || "");
+  const [emoji, setEmoji] = useState(task.emoji || "");
+  const [time, setTime] = useState(task.time || "");
+  const [dur, setDur] = useState(String(task.durMin || ""));
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg mx-auto hw-card !rounded-b-none p-5 pb-8 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-lg">✏️ Habit edit</p>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
+        </div>
+        <label className="block">
+          <span className="text-xs text-neutral-400 mb-1 block">Emoji</span>
+          <div className="flex gap-1.5 flex-wrap">
+            {TASK_EMOJIS.map((e) => (
+              <button key={e} onClick={() => setEmoji(e)}
+                className={`w-9 h-9 rounded-xl text-lg border transition ${emoji === e ? "bg-lime-400/20 border-lime-400/60" : "bg-black/30 border-white/10"}`}>{e}</button>
+            ))}
+          </div>
+        </label>
+        <Field label="Habit" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Evening walk" />
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Kab (time)" value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 7:00 PM" />
+          <Field label="Kitni der (min)" type="number" inputMode="numeric" value={dur} onChange={(e) => setDur(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="e.g. 30" />
+        </div>
+        <Btn className="w-full" disabled={!title.trim()} onClick={() => onSave({
+          ...task,
+          title: title.trim().slice(0, 40),
+          emoji: (emoji.trim() || task.emoji || "✨").slice(0, 3),
+          time: time.trim(),
+          durMin: Math.round(Number(dur) || 0),
+        })}>Save</Btn>
+        <button onClick={onDelete} className="w-full text-xs text-red-300/80 hover:text-red-300 py-1">Habit delete karo</button>
+      </div>
+    </div>
+  );
+}
+
+function habitsSort(tasks) {
+  // time wale pehle ascending, phir bina time wale, custom tag baad me nahi — as-is order default me bhi chalega
+  const withTime = tasks.filter((t) => t.time).sort((a, b) => (a.time > b.time ? 1 : -1));
+  const rest = tasks.filter((t) => !t.time);
+  return [...withTime, ...rest];
+}
+
 function HabitsCard({ day, taskToggle, persist }) {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [emoji, setEmoji] = useState("");
   const [time, setTime] = useState("");
+  const [dur, setDur] = useState("");
+  const [editIdx, setEditIdx] = useState(null);
+  const tasks = habitsSort(day.tasks);
   const add = () => {
     const t = title.trim();
     if (!t) return;
@@ -577,9 +635,18 @@ function HabitsCard({ day, taskToggle, persist }) {
       done: false,
       isDefault: false,
       time: time.trim() || "",
+      durMin: Math.round(Number(dur) || 0),
     };
     persist({ ...day, tasks: [...day.tasks, task] });
-    setTitle(""); setEmoji(""); setTime(""); setAdding(false);
+    setTitle(""); setEmoji(""); setTime(""); setDur(""); setAdding(false);
+  };
+  const saveEdited = (nt) => {
+    persist({ ...day, tasks: day.tasks.map((t) => (t.id === nt.id ? nt : t)) });
+    setEditIdx(null);
+  };
+  const removeTask = (t) => {
+    persist({ ...day, tasks: day.tasks.filter((x) => x.id !== t.id) });
+    setEditIdx(null);
   };
   return (
     <Card>
@@ -591,34 +658,56 @@ function HabitsCard({ day, taskToggle, persist }) {
       </div>
       {adding && (
         <div className="mb-3 p-3 rounded-xl bg-black/30 border border-white/10 space-y-2.5">
-          <div className="flex gap-2">
-            <input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="😀" maxLength={3}
-              className="w-14 text-center bg-black/40 border border-white/10 rounded-xl px-2 py-2.5 text-lg outline-none focus:border-lime-400/60" />
-            <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
-              onKeyDown={(e) => e.key === "Enter" && add()}
-              placeholder="Nayi habit (e.g. 1 L paani extra)"
-              className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+          <div>
+            <span className="text-xs text-neutral-400 mb-1.5 block">Emoji</span>
+            <div className="flex gap-1.5 flex-wrap">
+              {TASK_EMOJIS.slice(0, 8).map((e) => (
+                <button key={e} onClick={() => setEmoji(e === emoji ? "" : e)}
+                  className={`w-9 h-9 rounded-xl text-lg border transition ${emoji === e ? "bg-lime-400/20 border-lime-400/60" : "bg-black/30 border-white/10"}`}>{e}</button>
+              ))}
+            </div>
           </div>
-          <div className="flex items-end gap-2">
-            <Field label="Time (optional)" value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 7:00 PM"
-              className="flex-1" />
-            <Btn onClick={add} disabled={!title.trim()}>Add</Btn>
+          <Field label="Habit" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
+            placeholder="e.g. 10 min reading" onKeyDown={(e) => e.key === "Enter" && add()} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Kab (time)" value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 7:00 PM" />
+            <Field label="Kitni der (min)" type="number" inputMode="numeric" value={dur} onChange={(e) => setDur(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="e.g. 30" />
           </div>
+          <Btn className="w-full" onClick={add} disabled={!title.trim()}>Add habit ✓</Btn>
         </div>
       )}
       <div className="space-y-1.5">
-        {day.tasks.map((t, i) => (
-          <button key={t.id || i} onClick={() => taskToggle(i)}
-            className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl border transition text-left ${t.done ? "bg-lime-400/10 border-lime-400/30" : "bg-black/20 border-white/5 hover:bg-white/5"}`}>
-            <span key={t.done ? "d" : "u"} className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 hw-pop ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
-              {t.done ? "✓" : ""}
-            </span>
-            <span className="text-lg">{t.emoji}</span>
-            <span className={`flex-1 text-sm ${t.done ? "line-through text-neutral-500" : ""}`}>{t.title}</span>
-            <span className="text-[10px] text-neutral-600">{t.isDefault ? "" : "custom"}</span>
-            {t.time && <span className="text-xs text-neutral-500">{t.time}</span>}
-          </button>
-        ))}
+        {tasks.map((t) => {
+          const i = day.tasks.findIndex((x) => x.id === t.id);
+          return (
+            <div key={t.id} className={`flex items-stretch rounded-xl overflow-visible`}>
+              <button onClick={() => i >= 0 && taskToggle(i)}
+                className={`flex-1 flex items-center gap-3 px-3 py-3 rounded-xl border transition text-left hw-rowfade ${t.done ? "bg-lime-400/10 border-lime-400/40 hw-glow" : "bg-black/20 border-white/10 hover:bg-white/5"}`}>
+                <span key={t.done ? "d" : "u"} className={`w-6 h-6 rounded-lg border flex items-center justify-center text-sm shrink-0 hw-pop ${t.done ? "bg-lime-400 border-lime-400 text-neutral-900" : "border-white/20"}`}>
+                  {t.done ? "✓" : ""}
+                </span>
+                <span className="text-lg">{t.emoji}</span>
+                <span className="flex-1 min-w-0">
+                  <span className={`block text-sm truncate ${t.done ? "line-through text-neutral-500" : ""}`}>{t.title}</span>
+                  {(t.time || t.durMin) && (
+                    <span className="block text-[10px] text-neutral-500 mt-0.5">
+                      {t.time && <>⏰ {t.time}</>}
+                      {t.time && t.durMin ? " · " : ""}
+                      {t.durMin ? `${t.durMin} min` : ""}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[10px] text-neutral-600">{t.isDefault ? "" : "custom"}</span>
+              </button>
+              <button onClick={() => setEditIdx(t.id || String(i))} title="Edit"
+                className="w-9 flex items-center justify-center text-neutral-500 hover:text-lime-300 text-sm">✎</button>
+              {editIdx === (t.id || String(i)) && (
+                <TaskEditSheet task={t} onSave={saveEdited} onClose={() => setEditIdx(null)}
+                  onDelete={() => removeTask(t)} />
+              )}
+            </div>
+          );
+        })}
       </div>
     </Card>
   );
@@ -728,15 +817,15 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
       </div>
       <div className="flex items-center gap-4">
         <ScoreRing score={res.score} />
-        <div className="flex-1 space-y-1.5">
+        <div className="flex-1 space-y-2.5">
           {res.parts.length
             ? res.parts.map(([nm, val, max]) => val == null ? null : (
-              <div key={nm} className="flex items-center gap-2">
-                <span className="text-[11px] text-neutral-400 w-14 shrink-0">{nm}</span>
-                <div className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden">
-                  <div className="h-full rounded-full bg-gradient-to-r from-lime-400 to-emerald-400 hw-barfill" style={{ width: `${(val / max) * 100}%` }} />
+              <div key={nm} className="flex items-center gap-3">
+                <span className="text-xs text-neutral-300 w-16 shrink-0 font-medium">{nm}</span>
+                <div className="flex-1 h-2.5 rounded-full bg-white/10 overflow-hidden">
+                  <div className={`h-full rounded-full hw-barfill ${nm === "Water" ? "bg-gradient-to-r from-cyan-400 to-blue-400" : nm === "Screen" ? "bg-gradient-to-r from-amber-400 to-yellow-400" : nm === "Meals" ? "bg-gradient-to-r from-pink-400 to-fuchsia-400" : "bg-gradient-to-r from-lime-400 to-emerald-400"}`} style={{ width: `${(val / max) * 100}%` }} />
                 </div>
-                <span className="text-[10px] text-neutral-500 w-10 text-right">{val}/{max}</span>
+                <span className="text-[11px] text-neutral-400 w-14 text-right tabular-nums">{val}<span className="text-neutral-600">/{max}</span></span>
               </div>
             ))
             : <p className="text-[11px] text-neutral-400">{range === "weekly" ? "Last 7 din" : "Is mahine"} ka average — {res.count} din ka data</p>}
@@ -807,7 +896,19 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
   const [kcal, setKcal] = useState(day[meal + "Kcal"] || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const save = () => persist({ ...day, [meal]: text.trim(), [meal + "Kcal"]: Math.max(0, Number(kcal) || 0) }) || onClose();
+  const save = async () => {
+    let k = Math.max(0, Number(kcal) || 0);
+    // kcal khali + AI on → save se pehle khud count
+    if (!k && (text || "").trim() && aiOn) {
+      setBusy(true); setErr("");
+      const res = await estimateKcal(text, (m) => setErr(m === "kcal samajh nahi aaya" ? "" : m));
+      if (typeof res === "number") k = res;
+      else if (res && res.error) { setBusy(false); setErr("AI count nahi kar paya — manually daalo ya Save dabao"); return; }
+      setBusy(false);
+    }
+    persist({ ...day, [meal]: text.trim(), [meal + "Kcal"]: k });
+    onClose();
+  };
   const aiEstimate = async () => {
     if (!(text || "").trim()) { setErr("Pehle khaana likho 🙂"); return; }
     setBusy(true); setErr("");
@@ -828,13 +929,13 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
         {aiOn && (
           <Btn kind="ghost" className="!bg-lime-400/10 !border-lime-400/30 !text-lime-300 w-full" onClick={aiEstimate} disabled={busy}>
-            {busy ? "🤖 Soch raha hoon…" : "✨ AI se kcal nikaalo"}
+            {busy ? "🤖 AI count kar raha hai…" : "✨ AI se kcal nikaalo"}
           </Btn>
         )}
         {err && <p className="text-xs text-red-300">{err}</p>}
         <div className="flex items-end gap-2">
-          <Field label="Calories (kcal)" type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
-          <Btn className="mb-0.5 flex-1" onClick={save}>Save</Btn>
+          <Field label={`Calories (kcal)${aiOn ? " — khali chhodo to AI khud count karega" : ""}`} type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
+          <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖…" : "Save"}</Btn>
         </div>
       </div>
     </div>

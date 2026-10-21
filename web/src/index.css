@@ -34,8 +34,13 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 
 .hw-card {
   background: linear-gradient(160deg, #1b1b25 0%, #17171f 100%);
-  border: 1px solid #2a2a36;
+  border: 1px solid #34344a;
   border-radius: 1.25rem;
+}
+
+/* active/done habit row ka soft glow */
+.hw-glow {
+  box-shadow: 0 0 18px rgba(163, 230, 53, 0.14), inset 0 0 12px rgba(163, 230, 53, 0.05);
 }
 
 .hw-fade-in {

@@ -46,7 +46,7 @@ export function clearShared() {
 function sharedCfg() {
   try {
     const c = JSON.parse(localStorage.getItem(SHARED_CACHE) || "null");
-    return c && c.key && c.key.length >= 8 && c.baseUrl ? c : null;
+    return c && c.key && c.key.length >= 4 && c.baseUrl ? c : null;
   } catch {
     return null;
   }
@@ -79,7 +79,8 @@ export function clearAI() {
 
 export function isConfigured() {
   const a = getAI();
-  return a.baseUrl.startsWith("http") && a.apiKey.length >= 8 && !!a.model;
+  // custom/local providers ke liye key "no-key" bhi valid (6 chars) — isliye >= 4
+  return a.baseUrl.startsWith("http") && a.apiKey.length >= 4 && !!a.model;
 }
 
 function extractJsonObject(text) {

@@ -230,7 +230,7 @@ export async function getSharedAI() {
     if (!mv || !mv.mapValue) return null;
     const out = {};
     for (const [k, v] of Object.entries(mv.mapValue.fields || {})) out[k] = fromFs(v);
-    return out.key && out.key.length >= 8 ? out : null;
+    return out.key && out.key.length >= 4 ? out : null;
   } catch {
     return null;
   }
