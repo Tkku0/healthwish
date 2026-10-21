@@ -477,7 +477,7 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
                 <span className="text-sm font-medium">{icon} {label}</span>
                 <span className={`text-xs font-bold ${(day[k + "Kcal"] || 0) > 0 ? "text-lime-300" : "text-neutral-600"}`}>{day[k] || day[k + "Kcal"] ? `🔥 ${day[k + "Kcal"] || 0}` : "+"}</span>
               </div>
-              <p className="text-xs text-neutral-400 mt-1 truncate">{day[k] || "kuch nahi"}</p>
+              <p className="text-xs text-neutral-400 mt-1.5 whitespace-pre-wrap break-words leading-snug">{day[k] || "kuch nahi"}</p>
             </button>
           ))}
         </div>
