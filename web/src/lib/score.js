@@ -18,9 +18,22 @@ export function screenHours(str) {
   return m ? parseFloat(m[0]) : 0;
 }
 
+// habit aaj schedule me hai? (temporary: sirf created day pe, weekly: us weekday pe, baaki roz)
+export function taskScheduled(t, dateKey) {
+  if (!t) return false;
+  if (t.type === "temp") return !t.createdOn || t.createdOn === dateKey;
+  if (t.type === "weekly") {
+    if (!Array.isArray(t.wdays) || !t.wdays.length) return true;
+    const wd = new Date(`${dateKey}T00:00:00`).getDay();
+    return t.wdays.includes(wd);
+  }
+  return true;
+}
+
 // score 0-100: habits 30, water 20, kcal 25, meals 10, screen 15
 export function dailyScore(day, target) {
-  const tasks = day.tasks || [];
+  const dateKey = day.dateKey || "";
+  const tasks = (day.tasks || []).filter((t) => taskScheduled(t, dateKey));
   const tScore = tasks.length ? Math.round((tasks.filter((t) => t.done).length / tasks.length) * 30) : 0;
   const wScore = Math.min(20, Math.round(((day.waterGlasses || 0) / 8) * 20));
   const total = totalKcal(day);

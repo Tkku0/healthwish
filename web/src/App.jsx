@@ -10,7 +10,7 @@ import {
   coupleCompareOn, setCoupleCompare, coachMessage, coachChat,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
-import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours } from "./lib/score.js";
+import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours, taskScheduled } from "./lib/score.js";
 
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
@@ -605,7 +605,9 @@ function SleepCard({ day, dateKey, set, persist, profile }) {
 }
 
 // ---------- Habits (custom add + time/duration + edit) ----------
-const TASK_EMOJIS = ["✨", "🚶", "💪", "🧘", "💧", "🏃", "🥗", "📚", "😴", "🎸", "🧠", "☀️"];
+const TASK_EMOJIS = ["✨", "🚶", "💪", "🧘", "💧", "🏃", "🥗", "📚", "😴", "🎸", "🧠", "☀️", "💊", "💉", "🏥", "🌿"];
+const QUICK_HABITS = [["💊", "Medicine"], ["💉", "Vitamins"], ["🚶", "Walk"], ["🧘", "Yoga"], ["📚", "Reading"], ["💧", "Paani"], ["😴", "Soni"], ["🧠", "No phone"]];
+const WDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
 function TaskEditSheet({ task, onSave, onClose, onDelete }) {
   const [title, setTitle] = useState(task.title || "");
@@ -659,11 +661,15 @@ function HabitsCard({ day, taskToggle, persist }) {
   const [emoji, setEmoji] = useState("");
   const [time, setTime] = useState("");
   const [dur, setDur] = useState("");
+  const [rep, setRep] = useState("daily"); // daily | temp | weekly
+  const [wdays, setWdays] = useState([]);
   const [editIdx, setEditIdx] = useState(null);
-  const tasks = habitsSort(day.tasks);
+  const tasks = habitsSort((day.tasks || []).filter((t) => taskScheduled(t, day.dateKey)));
+  const resetAdd = () => { setTitle(""); setEmoji(""); setTime(""); setDur(""); setRep("daily"); setWdays([]); };
   const add = () => {
     const t = title.trim();
     if (!t) return;
+    if (rep === "weekly" && !wdays.length) return;
     const task = {
       id: `c_${Date.now().toString(36)}`,
       title: t.slice(0, 40),
@@ -672,9 +678,12 @@ function HabitsCard({ day, taskToggle, persist }) {
       isDefault: false,
       time: time.trim() || "",
       durMin: Math.round(Number(dur) || 0),
+      type: rep, // daily | temp | weekly
+      wdays: rep === "weekly" ? [...wdays] : [],
+      createdOn: rep === "temp" ? day.dateKey : "",
     };
-    persist({ ...day, tasks: [...day.tasks, task] });
-    setTitle(""); setEmoji(""); setTime(""); setDur(""); setAdding(false);
+    persist({ ...day, tasks: [...(day.tasks || []), task] });
+    resetAdd(); setAdding(false);
   };
   const saveEdited = (nt) => {
     persist({ ...day, tasks: day.tasks.map((t) => (t.id === nt.id ? nt : t)) });
@@ -695,21 +704,46 @@ function HabitsCard({ day, taskToggle, persist }) {
       {adding && (
         <div className="mb-3 p-3 rounded-xl bg-black/30 border border-white/10 space-y-2.5">
           <div>
+            <span className="text-xs text-neutral-400 mb-1.5 block">Quick add (tap karo)</span>
+            <div className="flex gap-1.5 flex-wrap">
+              {QUICK_HABITS.map(([e, nm]) => (
+                <button key={nm} onClick={() => { setEmoji(e); setTitle(nm); }}
+                  className={`px-2.5 py-1.5 rounded-xl text-[11px] border transition ${emoji === e && title === nm ? "bg-lime-400/20 border-lime-400/60 text-lime-200" : "bg-black/30 border-white/10 text-neutral-300"}`}>{e} {nm}</button>
+              ))}
+            </div>
+          </div>
+          <div>
             <span className="text-xs text-neutral-400 mb-1.5 block">Emoji</span>
             <div className="flex gap-1.5 flex-wrap">
-              {TASK_EMOJIS.slice(0, 8).map((e) => (
+              {TASK_EMOJIS.slice(0, 12).map((e) => (
                 <button key={e} onClick={() => setEmoji(e === emoji ? "" : e)}
                   className={`w-9 h-9 rounded-xl text-lg border transition ${emoji === e ? "bg-lime-400/20 border-lime-400/60" : "bg-black/30 border-white/10"}`}>{e}</button>
               ))}
             </div>
           </div>
           <Field label="Habit" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
-            placeholder="e.g. 10 min reading" onKeyDown={(e) => e.key === "Enter" && add()} />
+            placeholder="e.g. 10 min reading / Medicine 8AM" onKeyDown={(e) => e.key === "Enter" && add()} />
           <div className="grid grid-cols-2 gap-3">
             <Field label="Kab (time)" value={time} onChange={(e) => setTime(e.target.value)} placeholder="e.g. 7:00 PM" />
             <Field label="Kitni der (min)" type="number" inputMode="numeric" value={dur} onChange={(e) => setDur(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="e.g. 30" />
           </div>
-          <Btn className="w-full" onClick={add} disabled={!title.trim()}>Add habit ✓</Btn>
+          <div>
+            <span className="text-xs text-neutral-400 mb-1.5 block">Repeat kaise karega?</span>
+            <div className="flex gap-1.5 flex-wrap">
+              <Chip on={rep === "daily"} onClick={() => setRep("daily")}>🔁 Roz</Chip>
+              <Chip on={rep === "temp"} onClick={() => setRep("temp")}>✨ Sirf aaj</Chip>
+              <Chip on={rep === "weekly"} onClick={() => setRep("weekly")}>📅 Weekly</Chip>
+            </div>
+            {rep === "weekly" && (
+              <div className="flex gap-1.5 mt-2">
+                {WDAYS.map((w, idx) => (
+                  <button key={idx} onClick={() => setWdays(wdays.includes(idx) ? wdays.filter((x) => x !== idx) : [...wdays, idx])}
+                    className={`w-9 h-9 rounded-xl text-xs font-bold border transition ${wdays.includes(idx) ? "bg-lime-400/20 border-lime-400/60 text-lime-200" : "bg-black/30 border-white/10 text-neutral-400"}`}>{w}</button>
+                ))}
+              </div>
+            )}
+          </div>
+          <Btn className="w-full" onClick={add} disabled={!title.trim() || (rep === "weekly" && !wdays.length)}>Add habit ✓</Btn>
         </div>
       )}
       <div className="space-y-1.5">
@@ -730,10 +764,15 @@ function HabitsCard({ day, taskToggle, persist }) {
                       {t.time && <>⏰ {t.time}</>}
                       {t.time && t.durMin ? " · " : ""}
                       {t.durMin ? `${t.durMin} min` : ""}
+                      {t.type === "weekly" && Array.isArray(t.wdays) && t.wdays.length > 0 && (
+                        <> · 📅 {t.wdays.map((i) => WDAYS[i]).join(" ")}</>
+                      )}
                     </span>
                   )}
                 </span>
-                <span className="text-[10px] text-neutral-600">{t.isDefault ? "" : "custom"}</span>
+                <span className="text-[10px] text-neutral-600 shrink-0">
+                  {t.type === "temp" ? "✨ aaj" : t.type === "weekly" ? "📅 weekly" : t.isDefault ? "" : "🔁"}
+                </span>
               </button>
               <button onClick={() => setEditIdx(t.id || String(i))} title="Edit"
                 className="w-9 flex items-center justify-center text-neutral-500 hover:text-lime-300 text-sm">✎</button>
