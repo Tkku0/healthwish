@@ -1497,7 +1497,7 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         </div>
         <div className="flex gap-1.5 mt-2.5 mb-3">
           {PROFILE_PRESETS.map((p) => (
-            <Chip key={p} on={hpWho === p} onClick={() => setHpWho(p)}>{p === "Tkku" ? "🧍 Tkku" : "👩 Shumu"}</Chip>
+            <Chip key={p} on={hpWho === p} onClick={() => setHpWho(p)}>{p === "Tkku" ? "🧍‍♀️ Tkku" : "🧍‍♂️ Shumu"}</Chip>
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
