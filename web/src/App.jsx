@@ -1020,7 +1020,8 @@ function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, pa
     return {
       date: d.dateKey,
       kcal: dayTotal(d),
-      water: d.waterGlasses,
+      waterGlasses: d.waterGlasses,
+      waterMl: (d.waterGlasses || 0) * 250,
       habits: `${(d.tasks || []).filter((x) => x.done).length}/${(d.tasks || []).length}`,
       protein: dayMacros(d).protein,
       sleepH: dPrev ? sleepHours(dPrev, d) : null,
@@ -1054,7 +1055,8 @@ function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, pa
       meals: {
         breakfast: cap(day.breakfast), lunch: cap(day.lunch), dinner: cap(day.dinner), snacks: cap(day.snacks),
       },
-      water: day.waterGlasses,
+      waterGlasses: day.waterGlasses,
+      waterMl: (day.waterGlasses || 0) * 250,
       habits: (day.tasks || []).slice(0, 12).map((t) => ({ emoji: t.emoji, title: t.title, done: t.done, time: t.time, durMin: t.durMin || 0 })),
       habitsDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
       wakeup: day.wakeupTime,

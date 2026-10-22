@@ -289,7 +289,7 @@ export async function coachMessage(ctx, tone, slot) {
   const sys =
     HINGLISH_RULE + " " +
     `Right now in India it is ${ctx.time} (${slot} time). ${SLOT_HINT[slot]} ` +
-    "You get FULL health data: today's meals (kcal+macros), water, habit list with times, wakeup, sleep hours, " +
+    "You get FULL health data: today's meals (kcal+macros), water IN GLASSES (1 glass ~250ml, 8 glasses = 2L goal — NEVER treat glass count as litres), habit list with times, wakeup, sleep hours, " +
     "screen-on hours, weight, last-7-day day-wise summaries (with meals), recent weights, streak, best/worst day, " +
     "AND healthProfile (age, gender, height, blood group, diet type, goal, allergies, medical history, current medications). " +
     "IMPORTANT: if healthProfile has medical conditions or medications, ALWAYS tailor advice to them — " +
@@ -316,6 +316,7 @@ export async function coachChat(messages, ctx) {
     HINGLISH_RULE + " " +
     `Abhi India (IST) me ${ctx.time} baje hain. User ka FULL health data: ` +
     JSON.stringify(ctx) +
+    " NOTE: ctx waterGlasses GLASSES me hota (1 glass ~250ml, 8 = 2L), litre mat samajhna. " +
     " Chat me short Hinglish replies (2-4 lines max), specific numbers use karo, concrete suggestion ke saath khatam karo. " +
     "last7 me purane din ka pattern dikhe to zaroor mention karo (jaise '3 din se sleep 6h hi hai'). " +
     "healthProfile me medical conditions/meds/allergies hain to advice USI HISAB se do (safe alternatives suggest karo); " +
