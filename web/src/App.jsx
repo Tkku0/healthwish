@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
-  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote,
+  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -321,21 +321,18 @@ function ProfileGate({ onPick, installEvt }) {
 
 // ---------- Auth gate ----------
 function AuthScreen({ onAuth, onSkip }) {
-  const [mode, setMode] = useState("login"); // login | signup
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const go = async () => {
-    if (!email.trim() || pass.length < 6) { setErr(mode === "signup" ? "Password 6+ chars rakho" : "Email + password do"); return; }
+    if (!email.trim() || pass.length < 6) { setErr("Email + password (6+ chars) do"); return; }
     setBusy(true); setErr("");
     try {
-      await emailAuth(email, pass.trim(), mode === "signup");
+      await emailAuth(email, pass.trim(), false);
       await onAuth(email.trim().toLowerCase());
     } catch (e) {
-      setErr(mode === "signup" && /EMAIL_EXISTS/i.test(e.message)
-        ? "Ye email registered hai — Login karke try karo"
-        : /INVALID_LOGIN/i.test(e.message) ? "Email/password galat hai" : e.message);
+      setErr(/INVALID_LOGIN/i.test(e.message) ? "Email/password galat hai" : e.message);
     }
     setBusy(false);
   };
@@ -343,21 +340,16 @@ function AuthScreen({ onAuth, onSkip }) {
     <div className="min-h-full flex flex-col items-center justify-center px-6 text-center">
       <div className="text-6xl mb-4">💚</div>
       <h1 className="text-3xl font-extrabold hw-gradient-text">HealthWish</h1>
-      <p className="text-sm text-neutral-400 mt-2 mb-8">{mode === "signup" ? "Naya account banao (couple join ke liye)" : "Apne account se login karo"}</p>
+      <p className="text-sm text-neutral-400 mt-2 mb-8">Apne account se login karo</p>
       <div className="w-full max-w-xs space-y-3 text-left">
         <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tum@example.com" autoFocus />
         <Field label="Password" type="password" value={pass} onChange={(e) => setPass(e.target.value)}
-          placeholder={mode === "signup" ? "6+ characters" : "••••••"}
+          placeholder="••••••"
           onKeyDown={(e) => e.key === "Enter" && go()} />
         {err && <p className="text-xs text-red-300">{err}</p>}
-        <Btn className="w-full" onClick={go} disabled={busy}>{busy ? "…" : mode === "signup" ? "Sign Up ✓" : "Login →"}</Btn>
-        <button onClick={() => { setMode(mode === "signup" ? "login" : "signup"); setErr(""); }}
-          className="w-full text-xs text-lime-300/90 py-1">
-          {mode === "signup" ? "Already a member? Login" : "Pehli baar? Sign Up banao"}
-        </button>
+        <Btn className="w-full" onClick={go} disabled={busy}>{busy ? "…" : "Login →"}</Btn>
         <button onClick={onSkip} className="w-full text-[11px] text-neutral-500 py-1">Abhi login karna nahi — manual mode me jao →</button>
       </div>
-      {mode === "signup" && <p className="text-[11px] text-neutral-500 mt-6 max-w-xs">Couple ke dono partner apne email se signup karte hain — pehla member couple cred karta hai, doosre ka email doosre device pe whitelist hota hai.</p>}
     </div>
   );
 }
@@ -566,6 +558,9 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
       </Card>
 
       {mealEdit && <MealSheet meal={mealEdit} day={day} persist={persist} onClose={() => setMealEdit(null)} aiOn={aiOn} />}
+
+      {/* NoFap — sabse last, sirf Shumu */}
+      {profile === "Shumu" && <NoFapCard key={profile} dateKey={dateKey} profile={profile} />}
     </div>
   );
 }
@@ -1062,6 +1057,119 @@ function ScoreRing({ score }) {
 }
 
 // ---------- Partner today mini ----------
+// ---------- NoFap tracker (sirf Shumu, home ke sabse last card) ----------
+function NoFapCard({ dateKey, profile }) {
+  const [events, setEvents] = useState(() => { try { return JSON.parse(localStorage.getItem(`hw_nofap_${profile}`) || "[]") || []; } catch { return []; } });
+  const [open, setOpen] = useState(false);
+  const [ld, setLd] = useState(dateKey);
+  const [lt, setLt] = useState("");
+  useEffect(() => {
+    const n = istNow();
+    setLt(`${n.hour}:${String(n.min).padStart(2, "0")}`);
+  }, [open]);
+  useEffect(() => {
+    let alive = true;
+    getNoFap(profile).then((ev) => {
+      if (!alive || !Array.isArray(ev)) return;
+      if (ev.length > events.length) {
+        setEvents(ev);
+        localStorage.setItem(`hw_nofap_${profile}`, JSON.stringify(ev));
+      }
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [profile]);
+  const save = (evs) => {
+    evs = (evs || []).slice(-50).sort((a, b) => ((a.d + (a.t || "")) < (b.d + (b.t || "")) ? -1 : 1));
+    setEvents(evs);
+    localStorage.setItem(`hw_nofap_${profile}`, JSON.stringify(evs));
+    setNoFap(profile, evs).catch(() => {});
+  };
+  const logEvent = () => {
+    if (!ld || !lt) return;
+    setOpen(false);
+    save([...events, { d: ld, t: lt, ts: Date.now() }]);
+  };
+  const del = (i) => save(events.filter((_, j) => j !== i));
+  const dayDiff = (k1, k2) => Math.round((new Date(k2 + "T00:00:00") - new Date(k1 + "T00:00:00")) / 86400000);
+  const sorted = events.slice().sort((a, b) => ((a.d + (a.t || "")) < (b.d + (b.t || "")) ? -1 : 1));
+  const last = sorted[sorted.length - 1];
+  const cleanDays = last ? Math.max(0, dayDiff(last.d, dateKey)) : null;
+  const best = sorted.reduce((acc, e, i) => {
+    if (i === 0) { acc.prev = e.d; return acc; }
+    const gap = Math.max(0, dayDiff(acc.prev, e.d));
+    acc.gap = Math.max(acc.gap, gap > 0 ? gap : 0);
+    acc.prev = e.d;
+    return acc;
+  }, { prev: null, gap: 0 });
+  const bestRun = last ? Math.max(best.gap, cleanDays) : 0;
+  const monthCount = sorted.filter((e) => e.d.slice(0, 7) === dateKey.slice(0, 7)).length;
+  return (
+    <Card>
+      <div className="text-center">
+        <p className="text-[11px] text-neutral-500 mb-1">🔒 {profile} ka private mission</p>
+        <p className="text-sm font-bold">🚫 Masturbation quit kro (NoFap Mission)</p>
+        {last ? (
+          <>
+            <p className="text-4xl font-extrabold hw-gradient-text mt-2">{cleanDays === 0 ? "0" : cleanDays}</p>
+            <p className="text-xs text-neutral-400 mt-0.5">din ho gaye {cleanDays === 0 ? "aaj kiya — ab naya count shuru 💪" : "clean hue"}</p>
+          </>
+        ) : (
+          <p className="text-xs text-neutral-400 mt-3">Pahla record daalo — fir din count honge 🌱</p>
+        )}
+      </div>
+      <div className="flex gap-2 mt-3">
+        <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-center">
+          <p className="text-[10px] text-neutral-500">Record</p>
+          <p className="text-sm font-bold">{bestRun} din 🏆</p>
+        </div>
+        <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-center">
+          <p className="text-[10px] text-neutral-500">Is mahine</p>
+          <p className="text-sm font-bold">{monthCount} baar</p>
+        </div>
+        <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-center">
+          <p className="text-[10px] text-neutral-500">Total logs</p>
+          <p className="text-sm font-bold">{events.length}</p>
+        </div>
+      </div>
+      <div className="mt-3"><Btn className="w-full" onClick={() => setOpen(true)}>📝 Aaj/Parso ka log karo (date + time)</Btn></div>
+      {sorted.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {sorted.slice(-5).reverse().map((e, i) => {
+            const ri = sorted.length - 1 - i;
+            return (
+              <div key={i} className="flex items-center gap-2 text-[12px] bg-white/5 border border-white/10 rounded-xl px-3 py-1.5">
+                <span className="text-neutral-400">📅 {e.d} · 🕒 {e.t || "--:--"}</span>
+                <button onClick={() => del(ri)} className="ml-auto text-red-300/70 hover:text-red-300 text-xs">🗑</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {open && (
+        <div className="mt-3 p-3 rounded-xl bg-black/40 border border-white/10 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <label>
+              <span className="text-[10px] text-neutral-400">Date</span>
+              <input type="date" value={ld} onChange={(e) => setLd(e.target.value)}
+                className="w-full mt-0.5 bg-black/40 border border-white/10 rounded-xl px-2.5 py-2 text-[13px] outline-none focus:border-lime-400/60" />
+            </label>
+            <label>
+              <span className="text-[10px] text-neutral-400">Time</span>
+              <input type="time" value={lt} onChange={(e) => setLt(e.target.value)}
+                className="w-full mt-0.5 bg-black/40 border border-white/10 rounded-xl px-2.5 py-2 text-[13px] outline-none focus:border-lime-400/60" />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <Btn onClick={logEvent} disabled={!ld || !lt} className="flex-1">💾 Save</Btn>
+            <Btn kind="ghost" onClick={() => setOpen(false)} className="flex-1">Cancel</Btn>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function PartnerMini({ partner, dateKey, target }) {
   const [pd, setPd] = useState(null);
   useEffect(() => {

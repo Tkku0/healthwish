@@ -272,6 +272,33 @@ export async function getHealthRemote(profile) {
     return out;
   } catch { return null; }
 }
+export async function getNoFap(profile) {
+  try {
+    const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+    const j = await res.json();
+    const mv = j.fields && j.fields[`nofap_${profile}`];
+    if (!mv || !mv.mapValue) return [];
+    const fm = mv.mapValue.fields || {};
+    const em = fm.events && fm.events.arrayValue ? fm.events.arrayValue.values : [];
+    const out = (em || []).map((x) => {
+      const f = (x.mapValue && x.mapValue.fields) || {};
+      return { d: fromFs(f.d) || "", t: fromFs(f.t) || "", ts: fromFs(f.ts) || 0 };
+    });
+    return out.filter((x) => x.d);
+  } catch { return []; }
+}
+
+export async function setNoFap(profile, events) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  const fp = `nofap_${profile}`;
+  const mask = `updateMask.fieldPaths=${fp}`;
+  await fsFetch(`${url}&${mask}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { [fp]: toFs({ events }) } }),
+  });
+}
+
 export async function setHealthRemote(profile, obj) {
   const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
   const fp = `health_${profile}`;
