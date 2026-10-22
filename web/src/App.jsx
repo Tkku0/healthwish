@@ -827,44 +827,24 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
     const cached = localStorage.getItem(coachKey);
     if (!force && cached) { setCoach(cached); return; }
     setCoachBusy(true);
-    let partnerCtx = null;
+    let partnerDoc = null;
     if (coupleCompareOn() && partnerName) {
-      try {
-        const pd = await getDay(todayKey(), partnerName);
-        partnerCtx = { name: partnerName, score: dailyScore(pd, target).score, kcal: dayTotal(pd) };
-      } catch {}
+      try { partnerDoc = await getDay(todayKey(), partnerName); } catch {}
     }
-    let trend = [];
-    let streak = 0;
-    try {
-      let list = docs;
-      if (!list) {
-        list = (await listRecent(profile, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
-        setDocs(list);
-      }
-      if (list && list.length) {
-        trend = list.slice(0, 7).map((d) => dailyScore(d, target).score);
-        for (const sc of trend) { if (sc >= 60) streak += 1; else break; }
-      }
-    } catch {}
+    let docsNow = docs;
+    if (!docsNow) {
+      try {
+        docsNow = (await listRecent(profile, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
+        setDocs(docsNow);
+      } catch { docsNow = null; }
+    }
     const t = istRef.current;
-    const ctx = {
-      time: `${t.hour}:${String(t.min).padStart(2, "0")}`,
-      slot,
-      userName: profile,
-      todayKcal: dayTotal(day),
-      kcalTarget: target || null,
-      water: day.waterGlasses,
-      tasksDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
-      macros: dmTot,
-      meals: [day.breakfast, day.lunch, day.dinner, day.snacks].filter(Boolean).join("; ").slice(0, 180),
-      wakeupTime: day.wakeupTime,
-      screenHours: screenHours(day.screenOnTime),
-      dayNote: (day.dayNote || "").slice(0, 140),
-      last7Scores: trend,
-      streak,
-      partner: partnerCtx,
-    };
+    const ctx = buildCoachContext({
+      day, dateKey, profile, target, docs: docsNow,
+      hours: t.hour, min: t.min,
+      partnerDoc, partnerName, couple: coupleCompareOn() && !!partnerName,
+    });
+    ctx.prevCoachMsg = localStorage.getItem(`hw_coach_${profile}_${dateKey}_${prevSlotOf(slot)}`) || null;
     const msg = await coachMessage(ctx, getTone(), slot);
     if (!msg.startsWith("Coach offline")) localStorage.setItem(coachKey, msg);
     setCoachBusy(false);
@@ -916,7 +896,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
         <div className="mt-3"><Btn kind="ghost" className="!bg-white/5" onClick={() => fetchCoach(true)}>🤖 Coach se poochho</Btn></div>
       )}
       {chatOpen && (
-        <CoachChat onClose={() => setChatOpen(false)} day={day} target={target} profile={profile} />
+        <CoachChat onClose={() => setChatOpen(false)} day={day} dateKey={dateKey} target={target} profile={profile} docs={docs} />
       )}
       {range !== "daily" && !docs && <p className="text-xs text-neutral-500 mt-2">Score nikal raha hoon…</p>}
     </Card>
@@ -925,30 +905,94 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
 
 const SLOT_ICON = { subah: "🌤", lunch: "☀️", snack: "🍪", dinner: "🌙", raat: "🌆", nay: "🌚" };
 
+const SLOT_ORDER = ["subah", "lunch", "snack", "dinner", "raat", "nay"];
+const prevSlotOf = (slot) => SLOT_ORDER[(SLOT_ORDER.indexOf(slot) + SLOT_ORDER.length - 1) % SLOT_ORDER.length];
+
+// Coach ko FULL health data: meals+macros, habits detail, sleep (kal raat se), weight + 7-din ka day-wise summary
+function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, partnerDoc, partnerName, couple }) {
+  const dm = dayMacros(day);
+  const list = docs || [];
+  const i = list.findIndex((x) => x.id === day.id);
+  const prevDoc = i >= 0 && i + 1 < list.length ? list[i + 1] : null;
+  const sleepH = prevDoc ? sleepHours(prevDoc, day) : 0;
+  const week = list.slice(0, 7).map((d, idx) => {
+    const dPrev = idx + 1 < list.length ? list[idx + 1] : null;
+    return {
+      date: d.dateKey,
+      kcal: dayTotal(d),
+      water: d.waterGlasses,
+      habits: `${(d.tasks || []).filter((x) => x.done).length}/${(d.tasks || []).length}`,
+      protein: dayMacros(d).protein,
+      sleepH: dPrev ? sleepHours(dPrev, d) : null,
+      screenH: screenHours(d.screenOnTime) || null,
+      weight: d.weightKg > 0 ? d.weightKg : null,
+      score: dailyScore(d, target).score,
+      note: (d.dayNote || "").slice(0, 60),
+    };
+  });
+  const scores = week.map((w) => w.score);
+  const wcum = scores.length ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : 0;
+  const streak = (() => { let n = 0; for (const x of scores) { if (x >= 60) n += 1; else break; } return n; })();
+  const best = week.length && scores.length ? week[scores.indexOf(Math.max(...scores))] : null;
+  const worst = week.length && scores.length ? week[scores.indexOf(Math.min(...scores))] : null;
+  const weights = (list.filter((d) => d.weightKg > 0) || []).slice(0, 4).map((d) => ({ date: d.dateKey.slice(5), kg: d.weightKg }));
+  const cap = (t) => String(t || "").slice(0, 90);
+  const ctx = {
+    time: `${hours}:${String(min).padStart(2, "0")}`,
+    userName: profile,
+    kcalTarget: target || null,
+    today: {
+      date: dateKey,
+      kcal: dayTotal(day),
+      macros: { protein: dm.protein, carbs: dm.carbs, fat: dm.fat, fiber: dm.fiber, sugar: dm.sugar },
+      meals: {
+        breakfast: cap(day.breakfast), lunch: cap(day.lunch), dinner: cap(day.dinner), snacks: cap(day.snacks),
+      },
+      water: day.waterGlasses,
+      habits: (day.tasks || []).slice(0, 12).map((t) => ({ emoji: t.emoji, title: t.title, done: t.done, time: t.time, durMin: t.durMin || 0 })),
+      habitsDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
+      wakeup: day.wakeupTime,
+      sleepHours: sleepH || null,
+      sleepMood: day.sleepMood || null,
+      dayMood: day.dayMood || null,
+      screenHours: screenHours(day.screenOnTime) || null,
+      weight: day.weightKg > 0 ? day.weightKg : null,
+      note: cap(day.dayNote),
+    },
+    last7: week,
+    last7Avg: wcum,
+    streak,
+    bestDay: best ? { date: best.date, score: best.score } : null,
+    worstDay: worst ? { date: worst.date, score: worst.score } : null,
+    recentWeights: weights,
+    partner: couple && partnerDoc ? {
+      name: partnerName,
+      score: dailyScore(partnerDoc, target).score,
+      kcal: dayTotal(partnerDoc),
+      protein: dayMacros(partnerDoc).protein,
+    } : null,
+  };
+  return ctx;
+}
+
 // ---------- Coach Chat (multi-turn, Hinglish) ----------
-function CoachChat({ onClose, day, target, profile }) {
+function CoachChat({ onClose, day, dateKey, target, profile, docs }) {
   const [msgs, setMsgs] = useState([]); // {role, content}
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const listEl = useRef(null);
   const istNowRef = useRef(istNow());
+  const partner = PROFILE_PRESETS.includes(profile) ? PROFILE_PRESETS.find((p) => p !== profile) : null;
 
   const ctxFull = useMemo(() => {
-    const dm = dayMacros(day);
-    return {
-      slot: istSlot(istNowRef.current.hour),
-      userName: profile,
-      todayKcal: dayTotal(day),
-      kcalTarget: target || null,
-      water: day.waterGlasses,
-      tasksDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
-      macros: dm,
-      meals: [day.breakfast, day.lunch, day.dinner, day.snacks].filter(Boolean).join("; ").slice(0, 200),
-      wakeupTime: day.wakeupTime,
-      screenHours: screenHours(day.screenOnTime),
-      dayNote: (day.dayNote || "").slice(0, 160),
-    };
-  }, [day, target, profile]);
+    const t = istNowRef.current;
+    const ctx = buildCoachContext({
+      day, dateKey, profile, target, docs,
+      hours: t.hour, min: t.min,
+      partnerDoc: null, partnerName: partner, couple: false,
+    });
+    return ctx;
+  }, [day, dateKey, target, profile, docs]);
 
   useEffect(() => {
     if (listEl.current) listEl.current.scrollTop = listEl.current.scrollHeight;

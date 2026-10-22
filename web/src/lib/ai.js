@@ -283,11 +283,18 @@ export async function coachMessage(ctx, tone, slot) {
     strict: "Tone: strict but caring drill sergeant — seedhi baat, koi bahana nahi.",
     chill: "Tone: chill homie, funny one-liners, relaxed advice.",
   }[tone] || "Tone: warm, encouraging.";
+  const prev = ctx.prevCoachMsg
+    ? ` Pichhle slot me tum ye bolte hi thi: "${String(ctx.prevCoachMsg).slice(0, 160)}" — uska repeat karo nahi hai, aage se keh rahe hai.`
+    : "";
   const sys =
     HINGLISH_RULE + " " +
     `Right now in India it is ${ctx.time} (${slot} time). ${SLOT_HINT[slot]} ` +
+    "You get FULL health data: today's meals (kcal+macros), water, habit list with times, wakeup, sleep hours, " +
+    "screen-on hours, weight, last-7-day day-wise summaries, recent weights, streak, best/worst day. " +
+    "Use the TREND (last7) when relevant — patterns jaise '3 din se protein 45g pe atka hai' chamakte hain to bolo. " +
     toneLine +
-    ' Reply strictly as JSON: {"msg":"..."} — msg 1-3 short lines, max 1 emoji.';
+    ' Reply strictly as JSON: {"msg":"..."} — msg 1-3 short lines, max 1 emoji.' +
+    prev;
   const user = JSON.stringify(ctx);
   try {
     const out = await aiCall(cfg, sys, user);
@@ -303,9 +310,10 @@ export async function coachChat(messages, ctx) {
   const cfg = getAI();
   const sys =
     HINGLISH_RULE + " " +
-    `Abhi India me ${ctx.time} baje hain (${ctx.slot}). User ka data: ` +
+    `Abhi India (IST) me ${ctx.time} baje hain. User ka FULL health data: ` +
     JSON.stringify(ctx) +
-    " Chat me short Hinglish replies (2-4 lines max), specific numbers use karo, ek concrete suggestion ke saath khatam karo.";
+    " Chat me short Hinglish replies (2-4 lines max), specific numbers use karo, concrete suggestion ke saath khatam karo. " +
+    "last7 me purane din ka pattern dikhe to zaroor mention karo (jaise '3 din se sleep 6h hi hai').";
   try {
     const text = await chatCall(cfg, [{ role: "system", content: sys }, ...messages]);
     return text.slice(0, 800);
