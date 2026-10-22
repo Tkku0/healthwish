@@ -230,6 +230,114 @@ export async function testAI() {
   return j && j.ok ? "JSON OK" : out.slice(0, 60);
 }
 
+// ---------- AI Coach (IST time-slot engine) ----------
+// IST hard-coded (UTC+5:30) — device TZ kuch bhi ho, India ka time hi chalta hai
+export function istNow() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + now.getTimezoneOffset() * 60000 + 5.5 * 3600000);
+  return { hour: ist.getHours(), min: ist.getMinutes(), dateKey: ist.toDateString() };
+}
+
+export function istSlot(hour) {
+  if (hour >= 23 || hour < 5) return "nay";
+  if (hour < 11) return "subah";
+  if (hour < 14) return "lunch";
+  if (hour < 17) return "snack";
+  if (hour < 21) return "dinner";
+  return "raat";
+}
+
+const SLOT_HINT = {
+  subah: "Subah time hai — kal ki raat ka data (sleep/late-eating) + aaj ka chhota plan do.",
+  lunch: "Lunch window hai — lunch ka gap ya light-khaana pe nudge, paani reminder.",
+  snack: "Shaam ka snack time — chai/mithai ke hidden kcal + fiber/fresh option pe focus.",
+  dinner: "Dinner window — aaj ka protein gap, walk/steps nudge.",
+  raat: "Raat — sleep-friendly advice + kal ke liye ek chhota goal.",
+  nay: "Late-night — ko low-key wrap karo aur jaldi so jane ki baat karo.",
+};
+
+export function getTone() {
+  return localStorage.getItem("hw_coach_tone") || "supportive";
+}
+export function setTone(t) {
+  localStorage.setItem("hw_coach_tone", t);
+}
+export function coupleCompareOn() {
+  return localStorage.getItem("hw_coach_couple") === "1";
+}
+export function setCoupleCompare(on) {
+  on ? localStorage.setItem("hw_coach_couple", "1") : localStorage.removeItem("hw_coach_couple");
+}
+
+const HINGLISH_RULE =
+  "You are 'Wish' — an Indian AI health coach inside a couple health app. " +
+  "STRICT LANGUAGE RULE: reply ONLY in natural Hinglish — Hindi + English mix in Latin script (like friends chat on WhatsApp). " +
+  "Never write full pure-English sentences (fitness words like protein, kcal, carbs are fine). " +
+  "Be a suspensebrat-free warm coach: specific numbers from the context, 1-2 short lines, ends with ONE small actionable nudge. " +
+  "No lectures, no generic advice — always refer to the user's actual numbers.";
+
+export async function coachMessage(ctx, tone, slot) {
+  const cfg = getAI();
+  const toneLine = {
+    supportive: "Tone: warm, encouraging, cheerleader vibes.",
+    strict: "Tone: strict but caring drill sergeant — seedhi baat, koi bahana nahi.",
+    chill: "Tone: chill homie, funny one-liners, relaxed advice.",
+  }[tone] || "Tone: warm, encouraging.";
+  const sys =
+    HINGLISH_RULE + " " +
+    `Right now in India it is ${ctx.time} (${slot} time). ${SLOT_HINT[slot]} ` +
+    toneLine +
+    ' Reply strictly as JSON: {"msg":"..."} — msg 1-3 short lines, max 1 emoji.';
+  const user = JSON.stringify(ctx);
+  try {
+    const out = await aiCall(cfg, sys, user);
+    const j = extractJsonObject(out);
+    return (j && j.msg ? String(j.msg) : out).slice(0, 320);
+  } catch (e) {
+    return "Coach offline: " + e.message;
+  }
+}
+
+// multi-turn chat — raw text reply (JSON mode nahi), context system me embedded
+export async function coachChat(messages, ctx) {
+  const cfg = getAI();
+  const sys =
+    HINGLISH_RULE + " " +
+    `Abhi India me ${ctx.time} baje hain (${ctx.slot}). User ka data: ` +
+    JSON.stringify(ctx) +
+    " Chat me short Hinglish replies (2-4 lines max), specific numbers use karo, ek concrete suggestion ke saath khatam karo.";
+  try {
+    const text = await chatCall(cfg, [{ role: "system", content: sys }, ...messages]);
+    return text.slice(0, 800);
+  } catch (e) {
+    return "Coach offline: " + e.message;
+  }
+}
+
+export async function chatCall(cfg, msgs) {
+  const res = await fetch(cfg.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0",
+    },
+    body: JSON.stringify({ model: cfg.model, messages: msgs, temperature: 0.55 }),
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      msg = (j.error && (j.error.message || j.error)) || msg;
+    } catch {}
+    throw new Error(String(msg).slice(0, 160));
+  }
+  const j = await res.json();
+  const text = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
+  if (!text.trim()) throw new Error("Empty reply — try again");
+  return text;
+}
+
 export async function reviewScore(day, scoreRes, target) {
   const cfg = getAI();
   const sys =

@@ -5,7 +5,8 @@ import {
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
-  estimateMealNutrition, reviewScore, storeShared, usingShared,
+  estimateMealNutrition, storeShared, usingShared, istSlot, istNow, getTone, setTone,
+  coupleCompareOn, setCoupleCompare, coachMessage, coachChat,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours } from "./lib/score.js";
@@ -455,7 +456,7 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
       {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} />}
 
       {/* Score top pe */}
-      <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} />
+      <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} partnerName={partner} />
 
       {/* Sleep — score ke turant niche */}
       <SleepCard day={day} dateKey={dateKey} set={set} persist={persist} profile={profile} />
@@ -790,11 +791,9 @@ function WaterCard({ water, onChange }) {
 }
 
 // ---------- Score (daily / weekly / monthly) ----------
-function ScoreCard({ day, dateKey, target, profile, aiOn }) {
+function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
   const [range, setRange] = useState("daily"); // daily | weekly | monthly
   const [docs, setDocs] = useState(null); // listRecent cache
-  const [review, setReview] = useState("");
-  const [reviewBusy, setReviewBusy] = useState(false);
   useEffect(() => {
     if (range === "daily") return;
     let alive = true;
@@ -815,37 +814,67 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
     res = { score: r.score, parts: [], count: r.count };
   }
 
-  // AI day-review — app kholte hi auto chalega (din+profile pe cache, repeat calls nahi)
-  const reviewKey = `hw_review_${profile}_${dateKey}`;
+  // AI Coach — IST time-slot engine: har slot pe naya message (cache per slot)
+  const istRef = useRef(istNow());
+  const slot = istSlot(istRef.current.hour);
+  const coachKey = `hw_coach_${profile}_${dateKey}_${slot}`;
   const dmTot = dayMacros(day);
-  useEffect(() => {
-    const cached = localStorage.getItem(reviewKey);
-    setReviewBusy(false);
-    setReview(cached || "");
-    if (!aiOn) return;
-    if (cached) return;
-    let alive = true;
-    (async () => {
-      setReviewBusy(true);
-      const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day), macros: dmTot }, target);
-      if (!alive) return;
-      setReviewBusy(false);
-      setReview(txt);
-      if (!txt.startsWith("AI review offline")) localStorage.setItem(reviewKey, txt);
-    })();
-    return () => { alive = false; };
-  }, [reviewKey, aiOn]); // eslint-disable-line
+  const [coach, setCoach] = useState("");
+  const [coachBusy, setCoachBusy] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
 
-  const regenAI = async () => {
-    if (reviewBusy) return;
-    localStorage.removeItem(reviewKey);
-    setReview("");
-    setReviewBusy(true);
-    const txt = await reviewScore(day, { score: dScore.score, parts: dScore.parts, total: dayTotal(day), macros: dmTot }, target);
-    setReviewBusy(false);
-    setReview(txt);
-    if (!txt.startsWith("AI review offline")) localStorage.setItem(reviewKey, txt);
-  };
+  const fetchCoach = useCallback(async (force) => {
+    const cached = localStorage.getItem(coachKey);
+    if (!force && cached) { setCoach(cached); return; }
+    setCoachBusy(true);
+    let partnerCtx = null;
+    if (coupleCompareOn() && partnerName) {
+      try {
+        const pd = await getDay(todayKey(), partnerName);
+        partnerCtx = { name: partnerName, score: dailyScore(pd, target).score, kcal: dayTotal(pd) };
+      } catch {}
+    }
+    let trend = [];
+    let streak = 0;
+    try {
+      let list = docs;
+      if (!list) {
+        list = (await listRecent(profile, 40)).map((d) => ({ ...d, tasks: cleanTasks(d.tasks) }));
+        setDocs(list);
+      }
+      if (list && list.length) {
+        trend = list.slice(0, 7).map((d) => dailyScore(d, target).score);
+        for (const sc of trend) { if (sc >= 60) streak += 1; else break; }
+      }
+    } catch {}
+    const t = istRef.current;
+    const ctx = {
+      time: `${t.hour}:${String(t.min).padStart(2, "0")}`,
+      slot,
+      userName: profile,
+      todayKcal: dayTotal(day),
+      kcalTarget: target || null,
+      water: day.waterGlasses,
+      tasksDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
+      macros: dmTot,
+      meals: [day.breakfast, day.lunch, day.dinner, day.snacks].filter(Boolean).join("; ").slice(0, 180),
+      wakeupTime: day.wakeupTime,
+      screenHours: screenHours(day.screenOnTime),
+      dayNote: (day.dayNote || "").slice(0, 140),
+      last7Scores: trend,
+      streak,
+      partner: partnerCtx,
+    };
+    const msg = await coachMessage(ctx, getTone(), slot);
+    if (!msg.startsWith("Coach offline")) localStorage.setItem(coachKey, msg);
+    setCoachBusy(false);
+    setCoach(msg);
+  }, [coachKey, aiOn, day, target, partnerName, profile, docs]); // eslint-disable-line
+
+  useEffect(() => {
+    setCoach(localStorage.getItem(coachKey) || "");
+    if (aiOn) fetchCoach(false);
+  }, [coachKey, aiOn]); // eslint-disable-line
 
   return (
     <Card>
@@ -872,17 +901,102 @@ function ScoreCard({ day, dateKey, target, profile, aiOn }) {
         </div>
       </div>
       {aiOn && range === "daily" && (
-        review
+        coach
           ? (
             <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-lime-400/10 border border-lime-400/20 text-lime-200 flex items-start gap-2">
-              <span>🤖</span><span className="flex-1 whitespace-pre-wrap">{review}</span>
-              <button onClick={regenAI} disabled={reviewBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">↻</button>
+              <span>{SLOT_ICON[slot]}</span>
+              <span className="flex-1 whitespace-pre-wrap">{coach}</span>
+              <button onClick={() => { localStorage.removeItem(coachKey); fetchCoach(true); }} disabled={coachBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">↻</button>
+              <button onClick={() => setChatOpen(true)} disabled={coachBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">✉</button>
             </div>
           )
-          : reviewBusy && <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-neutral-400 flex items-center gap-2"><span className="hw-spin inline-block">🤖</span> AI din ka review bana raha hai…</div>
+          : coachBusy && <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-neutral-400 flex items-center gap-2"><span className="hw-spin inline-block">🤖</span> Coach plan bana raha hai…</div>
+      )}
+      {aiOn && range === "daily" && !coach && !coachBusy && (
+        <div className="mt-3"><Btn kind="ghost" className="!bg-white/5" onClick={() => fetchCoach(true)}>🤖 Coach se poochho</Btn></div>
+      )}
+      {chatOpen && (
+        <CoachChat onClose={() => setChatOpen(false)} day={day} target={target} profile={profile} />
       )}
       {range !== "daily" && !docs && <p className="text-xs text-neutral-500 mt-2">Score nikal raha hoon…</p>}
     </Card>
+  );
+}
+
+const SLOT_ICON = { subah: "🌤", lunch: "☀️", snack: "🍪", dinner: "🌙", raat: "🌆", nay: "🌚" };
+
+// ---------- Coach Chat (multi-turn, Hinglish) ----------
+function CoachChat({ onClose, day, target, profile }) {
+  const [msgs, setMsgs] = useState([]); // {role, content}
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const listEl = useRef(null);
+  const istNowRef = useRef(istNow());
+
+  const ctxFull = useMemo(() => {
+    const dm = dayMacros(day);
+    return {
+      slot: istSlot(istNowRef.current.hour),
+      userName: profile,
+      todayKcal: dayTotal(day),
+      kcalTarget: target || null,
+      water: day.waterGlasses,
+      tasksDone: `${(day.tasks || []).filter((x) => x.done).length}/${(day.tasks || []).length}`,
+      macros: dm,
+      meals: [day.breakfast, day.lunch, day.dinner, day.snacks].filter(Boolean).join("; ").slice(0, 200),
+      wakeupTime: day.wakeupTime,
+      screenHours: screenHours(day.screenOnTime),
+      dayNote: (day.dayNote || "").slice(0, 160),
+    };
+  }, [day, target, profile]);
+
+  useEffect(() => {
+    if (listEl.current) listEl.current.scrollTop = listEl.current.scrollHeight;
+  }, [msgs, busy]);
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    const hk = [...msgs, { role: "user", content: t }].slice(-8);
+    setMsgs(hk);
+    setText("");
+    setBusy(true);
+    const rep = await coachChat(hk, ctxFull);
+    setMsgs((m) => [...m, { role: "assistant", content: rep }]);
+    setBusy(false);
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg mx-auto hw-card !rounded-b-none flex flex-col" style={{ height: "72vh" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 pb-2 border-b border-white/10">
+          <div>
+            <p className="font-bold">🤖 AI Coach <span className="text-sm">{SLOT_ICON[istSlot(istNowRef.current.hour)]}</span></p>
+            <p className="text-[10px] text-neutral-500">Hinglish me baat karo — kaam ke tips milegi</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
+        </div>
+        <div ref={listEl} className="flex-1 overflow-y-auto p-4 space-y-2.5">
+          {!msgs.length && (
+            <div className="text-xs text-neutral-400 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
+              Coach ready 🤖 — puchho: <i>"aaj protein kam hai?"</i>, <i>"dinner me kya loon?"</i>, <i>"meri streak kitni hai?"</i> — data ke hisaab se jawab dega.
+            </div>
+          )}
+          {msgs.map((m, i) => (
+            <div key={i} className={`text-xs px-3 py-2.5 rounded-xl max-w-[85%] whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-lime-400/15 border border-lime-400/25" : "bg-white/5 border border-white/10"}`}>
+              {m.content}
+            </div>
+          ))}
+          {busy && <div className="text-xs text-neutral-400 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 max-w-[85%]"><span className="hw-spin inline-block">🤖</span> soch raha…</div>}
+        </div>
+        <div className="p-3 pt-2 border-t border-white/10 flex gap-2">
+          <input value={text} onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder="Coach ko likho… (Hinglish)"
+            className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+          <Btn onClick={send} disabled={busy || !text.trim()}>➤</Btn>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1205,6 +1319,8 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   const [csvMsg, setCsvMsg] = useState("");
   const [shareMsg, setShareMsg] = useState("");
   const [mTargets, setMTargets] = useState(() => macroTargets());
+  const [tone, setToneState] = useState(getTone());
+  const [cmp, setCmpS] = useState(coupleCompareOn());
 
   const applyPreset = (name) => {
     setPreset(name);
@@ -1305,6 +1421,21 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
             </div>
           </div>
         )}
+      </Card>
+
+      {/* Coach settings */}
+      <Card>
+        <p className="font-semibold text-sm mb-1">🤖 AI Coach</p>
+        <p className="text-[11px] text-neutral-500 mb-3">Coach Hinglish me baat karta hai — India time (IST) ke hisaab se subah/lunch/shaam/raat ke alag tips deta hai.</p>
+        <p className="text-[10px] text-neutral-400 mb-1.5">Tone</p>
+        <div className="flex gap-1.5 flex-wrap mb-3">
+          {[["supportive", "🌱 Supportive"], ["strict", "🔥 Strict"], ["chill", "😎 Chill"]].map(([k, label]) => (
+            <Chip key={k} on={tone === k} onClick={() => { setTone(k); setToneState(k); }}>{label}</Chip>
+          ))}
+        </div>
+        <Chip on={cmp} onClick={() => { setCoupleCompare(!cmp); setCmpS(!cmp); }}>
+          💞 Couple compare {cmp ? "ON" : "OFF"} — coach partner ke score se challenge dega
+        </Chip>
       </Card>
 
       {/* Goal */}
