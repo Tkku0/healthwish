@@ -818,10 +818,23 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
   const istRef = useRef(istNow());
   const slot = istSlot(istRef.current.hour);
   const coachKey = `hw_coach_${profile}_${dateKey}_${slot}`;
+  const sendChat = async () => {
+    const t = chatText.trim();
+    if (!t || chatBusy) return;
+    const hk = [...chatMsgs, { role: "user", content: t }].slice(-8);
+    setChatMsgs(hk); setChatText(""); setChatBusy(true);
+    const tt = istRef.current;
+    const ctx = buildCoachContext({ day, dateKey, profile, target, docs, hours: tt.hour, min: tt.min, partnerDoc: null, partnerName, couple: false });
+    const rep = await coachChat(hk, ctx);
+    setChatMsgs((m) => [...m, { role: "assistant", content: rep }]);
+    setChatBusy(false);
+  };
   const dmTot = dayMacros(day);
   const [coach, setCoach] = useState("");
   const [coachBusy, setCoachBusy] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatText, setChatText] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
 
   const fetchCoach = useCallback(async (force) => {
     const cached = localStorage.getItem(coachKey);
@@ -881,22 +894,52 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
         </div>
       </div>
       {aiOn && range === "daily" && (
-        coach
-          ? (
-            <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-lime-400/10 border border-lime-400/20 text-lime-200 flex items-start gap-2">
-              <span>{SLOT_ICON[slot]}</span>
-              <span className="flex-1 whitespace-pre-wrap">{coach}</span>
-              <button onClick={() => { localStorage.removeItem(coachKey); fetchCoach(true); }} disabled={coachBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">↻</button>
-              <button onClick={() => setChatOpen(true)} disabled={coachBusy} className="text-lime-300/70 hover:text-lime-300 text-[10px] shrink-0">✉</button>
+        coach || coachBusy ? (
+          <div className="mt-4 rounded-2xl bg-gradient-to-br from-lime-400/10 to-emerald-500/5 border border-lime-400/25 p-3.5">
+            <div className="flex items-center gap-2.5 mb-1">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-lime-400 to-emerald-500 flex items-center justify-center text-lg shadow-lg shadow-lime-500/20 shrink-0">🤖</div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-bold text-lime-200 leading-tight">AI Coach <span className="text-[10px] font-medium text-lime-400/70">{SLOT_ICON[slot]} {SLOT_NAME[slot]}</span></p>
+                <p className="text-[10px] text-neutral-400 leading-tight">{TONE_LABEL[getTone()]} · IST</p>
+              </div>
+              <button onClick={() => { localStorage.removeItem(coachKey); fetchCoach(true); }} disabled={coachBusy}
+                className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-neutral-300 hover:text-lime-300 disabled:opacity-40 shrink-0">
+                <RefreshIcon className={`w-4 h-4 ${coachBusy ? "hw-spin" : ""}`} />
+              </button>
             </div>
-          )
-          : coachBusy && <div className="mt-3 text-xs px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-neutral-400 flex items-center gap-2"><span className="hw-spin inline-block">🤖</span> Coach plan bana raha hai…</div>
-      )}
-      {aiOn && range === "daily" && !coach && !coachBusy && (
-        <div className="mt-3"><Btn kind="ghost" className="!bg-white/5" onClick={() => fetchCoach(true)}>🤖 Coach se poochho</Btn></div>
-      )}
-      {chatOpen && (
-        <CoachChat onClose={() => setChatOpen(false)} day={day} dateKey={dateKey} target={target} profile={profile} docs={docs} />
+            {coach ? (
+              <>
+                <p className="text-[14px] leading-relaxed text-neutral-100 whitespace-pre-wrap pl-11 pr-1">{coach}</p>
+                {chatMsgs.length > 0 && (
+                  <div className="mt-2.5 space-y-1.5 pl-1 max-h-48 overflow-y-auto">
+                    {chatMsgs.map((m, i) => (
+                      <div key={i} className={`text-[13px] px-3 py-2 rounded-xl max-w-[88%] whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-lime-400/15 border border-lime-400/25 text-lime-100" : "bg-white/5 border border-white/10 text-neutral-200"}`}>{m.content}</div>
+                    ))}
+                    {chatBusy && <div className="text-[13px] text-neutral-400 bg-white/5 border border-white/10 rounded-xl px-3 py-2 max-w-full w-fit flex items-center gap-2"><span className="hw-spin inline-block">🤖</span> Coach soch raha…</div>}
+                  </div>
+                )}
+                <div className="mt-2.5 flex gap-2">
+                  <input value={chatText} onChange={(e) => setChatText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendChat()}
+                    placeholder="Coach se seedha puchho…" disabled={chatBusy}
+                    className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-[13px] outline-none focus:border-lime-400/60 min-w-0" />
+                  <button onClick={sendChat} disabled={chatBusy || !chatText.trim()}
+                    className="w-9 h-9 rounded-xl bg-gradient-to-br from-lime-400 to-emerald-500 text-black font-bold disabled:opacity-40 flex items-center justify-center shrink-0">➤</button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-[13px] text-neutral-400 pl-11"><span className="hw-spin inline-block">🤖</span> Din ka data dekh ke plan bana raha hai…</div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-2xl border border-dashed border-lime-400/30 p-3.5 flex items-center gap-3 bg-lime-400/5">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-lime-400 to-emerald-500 flex items-center justify-center text-lg shrink-0">🤖</div>
+            <div className="flex-1">
+              <p className="text-[13px] font-bold text-lime-200">AI Coach</p>
+              <p className="text-[11px] text-neutral-400">Aaj ka din, 7-din trend, sab kuch dekh ke guide karega</p>
+            </div>
+            <Btn onClick={() => fetchCoach(true)}>Poochho</Btn>
+          </div>
+        )
       )}
       {range !== "daily" && !docs && <p className="text-xs text-neutral-500 mt-2">Score nikal raha hoon…</p>}
     </Card>
@@ -904,6 +947,16 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
 }
 
 const SLOT_ICON = { subah: "🌤", lunch: "☀️", snack: "🍪", dinner: "🌙", raat: "🌆", nay: "🌚" };
+const SLOT_NAME = { subah: "Subah plan", lunch: "Lunch time", snack: "Shaam snack", dinner: "Dinner shaam", raat: "Raat wrap-up", nay: "Late night" };
+const TONE_LABEL = { supportive: "🌱 Supportive", strict: "🔥 Strict", chill: "😎 Chill" };
+
+function RefreshIcon({ className }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className || "w-4 h-4"}>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+    </svg>
+  );
+}
 
 const SLOT_ORDER = ["subah", "lunch", "snack", "dinner", "raat", "nay"];
 const prevSlotOf = (slot) => SLOT_ORDER[(SLOT_ORDER.indexOf(slot) + SLOT_ORDER.length - 1) % SLOT_ORDER.length];
@@ -927,6 +980,12 @@ function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, pa
       screenH: screenHours(d.screenOnTime) || null,
       weight: d.weightKg > 0 ? d.weightKg : null,
       score: dailyScore(d, target).score,
+      meals: {
+        breakfast: String(d.breakfast || "").slice(0, 60),
+        lunch: String(d.lunch || "").slice(0, 60),
+        dinner: String(d.dinner || "").slice(0, 60),
+        snacks: String(d.snacks || "").slice(0, 60),
+      },
       note: (d.dayNote || "").slice(0, 60),
     };
   });
@@ -973,75 +1032,6 @@ function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, pa
     } : null,
   };
   return ctx;
-}
-
-// ---------- Coach Chat (multi-turn, Hinglish) ----------
-function CoachChat({ onClose, day, dateKey, target, profile, docs }) {
-  const [msgs, setMsgs] = useState([]); // {role, content}
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const listEl = useRef(null);
-  const istNowRef = useRef(istNow());
-  const partner = PROFILE_PRESETS.includes(profile) ? PROFILE_PRESETS.find((p) => p !== profile) : null;
-
-  const ctxFull = useMemo(() => {
-    const t = istNowRef.current;
-    const ctx = buildCoachContext({
-      day, dateKey, profile, target, docs,
-      hours: t.hour, min: t.min,
-      partnerDoc: null, partnerName: partner, couple: false,
-    });
-    return ctx;
-  }, [day, dateKey, target, profile, docs]);
-
-  useEffect(() => {
-    if (listEl.current) listEl.current.scrollTop = listEl.current.scrollHeight;
-  }, [msgs, busy]);
-
-  const send = async () => {
-    const t = text.trim();
-    if (!t || busy) return;
-    const hk = [...msgs, { role: "user", content: t }].slice(-8);
-    setMsgs(hk);
-    setText("");
-    setBusy(true);
-    const rep = await coachChat(hk, ctxFull);
-    setMsgs((m) => [...m, { role: "assistant", content: rep }]);
-    setBusy(false);
-  };
-  return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg mx-auto hw-card !rounded-b-none flex flex-col" style={{ height: "72vh" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 pb-2 border-b border-white/10">
-          <div>
-            <p className="font-bold">🤖 AI Coach <span className="text-sm">{SLOT_ICON[istSlot(istNowRef.current.hour)]}</span></p>
-            <p className="text-[10px] text-neutral-500">Hinglish me baat karo — kaam ke tips milegi</p>
-          </div>
-          <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
-        </div>
-        <div ref={listEl} className="flex-1 overflow-y-auto p-4 space-y-2.5">
-          {!msgs.length && (
-            <div className="text-xs text-neutral-400 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5">
-              Coach ready 🤖 — puchho: <i>"aaj protein kam hai?"</i>, <i>"dinner me kya loon?"</i>, <i>"meri streak kitni hai?"</i> — data ke hisaab se jawab dega.
-            </div>
-          )}
-          {msgs.map((m, i) => (
-            <div key={i} className={`text-xs px-3 py-2.5 rounded-xl max-w-[85%] whitespace-pre-wrap ${m.role === "user" ? "ml-auto bg-lime-400/15 border border-lime-400/25" : "bg-white/5 border border-white/10"}`}>
-              {m.content}
-            </div>
-          ))}
-          {busy && <div className="text-xs text-neutral-400 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 max-w-[85%]"><span className="hw-spin inline-block">🤖</span> soch raha…</div>}
-        </div>
-        <div className="p-3 pt-2 border-t border-white/10 flex gap-2">
-          <input value={text} onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Coach ko likho… (Hinglish)"
-            className="flex-1 bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
-          <Btn onClick={send} disabled={busy || !text.trim()}>➤</Btn>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function ScoreRing({ score }) {
