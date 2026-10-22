@@ -290,7 +290,11 @@ export async function coachMessage(ctx, tone, slot) {
     HINGLISH_RULE + " " +
     `Right now in India it is ${ctx.time} (${slot} time). ${SLOT_HINT[slot]} ` +
     "You get FULL health data: today's meals (kcal+macros), water, habit list with times, wakeup, sleep hours, " +
-    "screen-on hours, weight, last-7-day day-wise summaries, recent weights, streak, best/worst day. " +
+    "screen-on hours, weight, last-7-day day-wise summaries (with meals), recent weights, streak, best/worst day, " +
+    "AND healthProfile (age, gender, height, blood group, diet type, goal, allergies, medical history, current medications). " +
+    "IMPORTANT: if healthProfile has medical conditions or medications, ALWAYS tailor advice to them — " +
+    "sedap: diabetes meal me sugar/sweet ho to clearly warn karo, BP/chol to high-sodium/fried food flag karo, " +
+    "thyroid to meal timing, asthma to vigorous exercise caution, koi med hai to interplay mention karo. Goal aur diet type respect karo. " +
     "Use the TREND (last7) when relevant — patterns jaise '3 din se protein 45g pe atka hai' chamakte hain to bolo. " +
     toneLine +
     ' Reply strictly as JSON: {"msg":"..."} — msg 1-3 short lines, max 1 emoji.' +
@@ -313,7 +317,9 @@ export async function coachChat(messages, ctx) {
     `Abhi India (IST) me ${ctx.time} baje hain. User ka FULL health data: ` +
     JSON.stringify(ctx) +
     " Chat me short Hinglish replies (2-4 lines max), specific numbers use karo, concrete suggestion ke saath khatam karo. " +
-    "last7 me purane din ka pattern dikhe to zaroor mention karo (jaise '3 din se sleep 6h hi hai').";
+    "last7 me purane din ka pattern dikhe to zaroor mention karo (jaise '3 din se sleep 6h hi hai'). " +
+    "healthProfile me medical conditions/meds/allergies hain to advice USI HISAB se do (safe alternatives suggest karo); " +
+    "serious concern ho to doctor se milne ki baat clearly bolo, ghabrao mat.";
   try {
     const text = await chatCall(cfg, [{ role: "system", content: sys }, ...messages]);
     return text.slice(0, 800);

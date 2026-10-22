@@ -254,6 +254,35 @@ export async function setSharedAI(cfg) {
   });
 }
 
+// ---- per-person health profile (medical history / meds) — alag field per profile, no mismatch ----
+export function healthLocal(profile) {
+  try { return JSON.parse(localStorage.getItem(`hw_health_${profile}`) || "null") || {}; } catch { return {}; }
+}
+export function saveHealthLocal(profile, obj) {
+  localStorage.setItem(`hw_health_${profile}`, JSON.stringify(obj));
+}
+export async function getHealthRemote(profile) {
+  try {
+    const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+    const j = await res.json();
+    const mv = j.fields && j.fields[`health_${profile}`];
+    if (!mv || !mv.mapValue) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(mv.mapValue.fields || {})) out[k] = fromFs(v);
+    return out;
+  } catch { return null; }
+}
+export async function setHealthRemote(profile, obj) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  const fp = `health_${profile}`;
+  const mask = `updateMask.fieldPaths=${fp}`;
+  await fsFetch(`${url}&${mask}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { [fp]: toFs(obj) } }),
+  });
+}
+
 export async function getDay(dateKey, ownerName) {
   const id = docIdFor(dateKey, ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;

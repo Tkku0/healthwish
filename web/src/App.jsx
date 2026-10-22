@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
+  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -825,6 +826,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
     setChatMsgs(hk); setChatText(""); setChatBusy(true);
     const tt = istRef.current;
     const ctx = buildCoachContext({ day, dateKey, profile, target, docs, hours: tt.hour, min: tt.min, partnerDoc: null, partnerName, couple: false });
+    ctx.healthProfile = healthLocal(profile);
     const rep = await coachChat(hk, ctx);
     setChatMsgs((m) => [...m, { role: "assistant", content: rep }]);
     setChatBusy(false);
@@ -857,6 +859,7 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
       hours: t.hour, min: t.min,
       partnerDoc, partnerName, couple: coupleCompareOn() && !!partnerName,
     });
+    ctx.healthProfile = healthLocal(profile); // apna hi — partner ka medical data yahan nahi aata
     ctx.prevCoachMsg = localStorage.getItem(`hw_coach_${profile}_${dateKey}_${prevSlotOf(slot)}`) || null;
     const msg = await coachMessage(ctx, getTone(), slot);
     if (!msg.startsWith("Coach offline")) localStorage.setItem(coachKey, msg);
@@ -949,6 +952,16 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
 const SLOT_ICON = { subah: "🌤", lunch: "☀️", snack: "🍪", dinner: "🌙", raat: "🌆", nay: "🌚" };
 const SLOT_NAME = { subah: "Subah plan", lunch: "Lunch time", snack: "Shaam snack", dinner: "Dinner shaam", raat: "Raat wrap-up", nay: "Late night" };
 const TONE_LABEL = { supportive: "🌱 Supportive", strict: "🔥 Strict", chill: "😎 Chill" };
+
+const HP_FIELDS = [
+  ["age", "🎂 Age", "25"], ["gender", "🚻 Gender", "Male / Female"], ["height", "📏 Height", "172"],
+  ["blood", "🩸 Blood group", "O+"], ["diet", "🥗 Diet type", "Veg / Non-veg / Eggetarian"],
+  ["goal", "🎯 Health goal", "Weight loss / Muscle gain / Maintain"], ["allergies", "⚠️ Allergies", "Kuch nahi / Peanuts etc"],
+];
+const HP_TEXTS = [
+  ["conditions", "🏥 Bimari / Medical history", "Diabetes, BP, thyroid, asthma... kuch nahi to khali chhod do"],
+  ["meds", "💊 Chal rahi medications", "Tablet ka naam + dose + kab leta hai (1 line per med)"],
+];
 
 function RefreshIcon({ className }) {
   return (
@@ -1354,6 +1367,22 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
   const [shareMsg, setShareMsg] = useState("");
   const [mTargets, setMTargets] = useState(() => macroTargets());
   const [tone, setToneState] = useState(getTone());
+  const [hpWho, setHpWho] = useState(profile);
+  const [hp, setHp] = useState(() => healthLocal(profile));
+  const [hpSaved, setHpSaved] = useState(false);
+  useEffect(() => {
+    if (!hpWho) return;
+    const t = setTimeout(() => {
+      saveHealthLocal(hpWho, hp);
+      setHealthRemote(hpWho, hp).then(() => setHpSaved(true)).catch(() => {});
+    }, 700);
+    return () => clearTimeout(t);
+  }, [hp, hpWho]);
+  // profile switch pe partner ka cached data load + remote se fresh
+  useEffect(() => {
+    setHp(healthLocal(hpWho)); setHpSaved(false);
+    getHealthRemote(hpWho).then((r) => { if (r) { setHp(r); saveHealthLocal(hpWho, r); } });
+  }, [hpWho]);
   const [cmp, setCmpS] = useState(coupleCompareOn());
 
   const applyPreset = (name) => {
@@ -1455,6 +1484,41 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
             </div>
           </div>
         )}
+      </Card>
+
+      {/* Health profile (per person) */}
+      <Card>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="font-semibold text-sm">🩺 Aapke baare mein</p>
+            <p className="text-[11px] text-neutral-500">Age, bimari, medicines — Coach aapko dhyan se guide karega</p>
+          </div>
+          {hpSaved && <span className="text-[10px] text-lime-300 shrink-0 mt-1">✓ saved</span>}
+        </div>
+        <div className="flex gap-1.5 mt-2.5 mb-3">
+          {PROFILE_PRESETS.map((p) => (
+            <Chip key={p} on={hpWho === p} onClick={() => setHpWho(p)}>{p === "Tkku" ? "🧍 Tkku" : "👩 Shumu"}</Chip>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {HP_FIELDS.map(([k, label, ph]) => (
+            <label key={k} className="block">
+              <span className="text-[10px] text-neutral-400">{label}</span>
+              <input value={hp[k] || ""} onChange={(e) => setHp({ ...hp, [k]: e.target.value })}
+                placeholder={ph}
+                className="w-full mt-0.5 bg-black/40 border border-white/10 rounded-xl px-2.5 py-2 text-[13px] outline-none focus:border-lime-400/60" />
+            </label>
+          ))}
+        </div>
+        {HP_TEXTS.map(([k, label, ph]) => (
+          <label key={k} className="block mt-2.5">
+            <span className="text-[10px] text-neutral-400">{label}</span>
+            <textarea value={hp[k] || ""} onChange={(e) => setHp({ ...hp, [k]: e.target.value })}
+              placeholder={ph} rows={2}
+              className="w-full mt-0.5 bg-black/40 border border-white/10 rounded-xl px-2.5 py-2 text-[13px] outline-none focus:border-lime-400/60 resize-none" />
+          </label>
+        ))}
+        <p className="text-[10px] text-neutral-500 mt-2.5">Khud hi ko bharo — {hpWho === "Tkku" ? "Shumu" : "Tkku"} ka data alag card me hai, dono ka data mix nahi hoga. Coach ko sirf apna dikhta hai, partner ka kabhi nahi.</p>
       </Card>
 
       {/* Coach settings */}
