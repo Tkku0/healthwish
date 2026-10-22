@@ -1498,6 +1498,62 @@ function WeightChart({ points }) {
 }
 
 // ---------- Settings ----------
+// ---------- Backup / Restore (hack-proof insurance) ----------
+function BackupCard({ profile }) {
+  const [busy, setBusy] = useState("");
+  const fileRef = useRef(null);
+  const exportAll = async () => {
+    setBusy("export");
+    try {
+      const days = await listRecent(profile, 400);
+      const nofap = (() => { try { return JSON.parse(localStorage.getItem(`hw_nofap_${profile}`) || "[]"); } catch { return []; } })();
+      const data = {
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        profile,
+        days: days.map((d) => ({ ...d, tasks: cleanTasks(d.tasks) })),
+        health: healthLocal(profile),
+        nofap,
+      };
+      const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `healthwish-backup-${profile}-${todayKey()}.json`;
+      a.click(); URL.revokeObjectURL(a.href);
+    } catch (e) { alert("Export fail: " + e.message); }
+    setBusy("");
+  };
+  const doRestore = async () => {
+    const f = fileRef.current && fileRef.current.files && fileRef.current.files[0];
+    if (!f) return;
+    setBusy("restore");
+    try {
+      const j = JSON.parse(await f.text());
+      const days = Array.isArray(j.days) ? j.days.filter((x) => x && x.dateKey) : [];
+      if (!days.length) { alert("Backup me days data nahi mila"); setBusy(""); return; }
+      if (!confirm(`${days.length} din ka data ${profile} ke naam se wapas write karega? (Aaj ke data pe merge hoga)`)) { setBusy(""); return; }
+      let ok = 0;
+      for (const d of days) {
+        try { await saveDay({ ...d, ownerName: profile }); ok += 1; } catch {}
+      }
+      alert(`Restore done: ${ok}/${days.length} din wapas aagaye ✓`);
+    } catch (e) { alert("Restore fail: " + e.message); }
+    setBusy("");
+    if (fileRef.current) fileRef.current.value = "";
+  };
+  return (
+    <Card>
+      <p className="font-semibold text-sm">💾 Backup & Restore</p>
+      <p className="text-[11px] text-neutral-500 mt-1">Hack-proof insurance — ek saf backup file apne phone/Google Drive me rakho. Delete atak se nahi qaid, ye file se kuch bhi dubara ban sakta hai.</p>
+      <div className="flex gap-2 mt-3">
+        <Btn className="flex-1" onClick={exportAll} disabled={busy !== ""}>{busy === "export" ? "Ban raha…" : `⬇ Export (${profile})`}</Btn>
+        <Btn kind="ghost" className="flex-1" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy !== ""}>{busy === "restore" ? "Restore…" : "⬆ Restore"}</Btn>
+      </div>
+      <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={doRestore} />
+    </Card>
+  );
+}
+
 function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, setLock, installEvt, recent, auth, onLogout }) {
   const ai = useMemo(getAI, []);
   const [preset, setPreset] = useState(Object.keys(PRESETS).find((k) => PRESETS[k][0] === localStorage.getItem("hw_ai_base")) || "");
@@ -1726,6 +1782,9 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         {csvMsg && <p className="text-xs text-lime-300 mt-2">{csvMsg}</p>}
         <p className="text-[11px] text-neutral-500 mt-3">Data Firestore (healthwish-6ca22) me sync hota hai — Android app wahi DB use karti hai, dono me same dikhega.</p>
       </Card>
+
+      {/* Backup */}
+      <BackupCard profile={profile} />
 
       {/* Account */}
       <Card>

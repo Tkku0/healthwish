@@ -1,5 +1,5 @@
 /* HealthWish PWA service worker — cache-first shell, network fallback */
-const CACHE = "hw-shell-v21";
+const CACHE = "hw-shell-v22";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
