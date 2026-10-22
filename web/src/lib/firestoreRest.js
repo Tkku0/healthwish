@@ -355,22 +355,30 @@ export async function saveDay(log) {
 // isliye pehle single-collection scan chalta hai; fail/khali pe batchGet (per-doc reads, rules-safe)
 // pichhle N din ke doc-IDs seedha marta hai. Doc-ID format hi authority hai: {date}_{profile-lower}.
 async function batchGetDays(ownerName, spanDays) {
+  // Firestore hard limit: 300 docs per batchGet → chunked 250 rakho (rules ke get() ka per-doc check bhi members ke liye safe rahta hai)
+  const span = Math.min(Math.max(spanDays, 1), 400);
   const names = [];
-  for (let i = 0; i < spanDays; i++) {
+  for (let i = 0; i < span; i++) {
     names.push(`projects/${PROJECT_ID}/databases/(default)/documents/couples/${COUPLE_ID}/days/${docIdFor(shiftDateKey(todayKey(), -i), ownerName)}`);
   }
-  const res = await fsFetch(`${BASE}:batchGet?key=${API_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ documents: names }),
-  });
-  const rows = await res.json();
+  const CH = 250;
   const out = [];
-  for (const r of rows) {
-    if (r.found) out.push(parseDoc(r.found.name, r.found.fields));
+  for (let ci = 0; ci < names.length; ci += CH) {
+    const slice = names.slice(ci, ci + CH);
+    const res = await fsFetch(`${BASE}:batchGet?key=${API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ documents: slice }),
+    });
+    const rows = await res.json();
+    for (const r of rows) {
+      if (r.found) out.push(parseDoc(r.found.name, r.found.fields));
+    }
   }
-  out.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
-  return out;
+  const seen = new Set();
+  const ded = out.filter((d) => (seen.has(d.id) ? false : (seen.add(d.id), true)));
+  ded.sort((a, b) => (b.id > a.id ? 1 : b.id < a.id ? -1 : 0));
+  return ded;
 }
 
 export async function listRecent(ownerName, limit = 30) {
