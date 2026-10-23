@@ -120,6 +120,10 @@ function parseDoc(name, fields) {
   return merged;
 }
 
+// ---- live sync-diagnostics (user ko exact error dikhane ke liye) ----
+export const SYNC = { failCount: 0, lastCode: "", lastMsg: "", lastAt: 0, okAt: 0 };
+export function syncStatus() { return { ...SYNC }; }
+
 async function fsFetch(url, opts) {
   const token = await getValidToken();
   const headers = Object.assign({}, (opts && opts.headers) || {});
@@ -131,8 +135,14 @@ async function fsFetch(url, opts) {
       const j = await res.json();
       if (j.error && j.error.message) msg = j.error.message;
     } catch {}
+    SYNC.failCount += 1;
+    SYNC.lastCode = String(res.status);
+    SYNC.lastMsg = String(msg).slice(0, 200);
+    SYNC.lastAt = Date.now();
     throw new Error(msg);
   }
+  SYNC.okAt = Date.now();
+  SYNC.failCount = 0;
   return res;
 }
 

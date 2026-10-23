@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
-  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap,
+  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -142,11 +142,11 @@ export default function App() {
         if (!alive) return;
         docLoadedFor.current = key;
         setDay(doc); setExists(true);
-      } catch {
+      } catch (e) {
         if (!alive) return;
         docLoadedFor.current = key;
         setDay(emptyDay(dateKey, profile)); setExists(false);
-        if (!loadErr) setLoadErr("");
+        if (!/404/i.test(String(e.message))) setLoadErr(`Data load fail — ${String(e.message).slice(0, 120)}`);
       }
     })();
     return () => { alive = false; };
@@ -244,7 +244,12 @@ export default function App() {
           onNext={() => dateKey !== todayKey() && setDateKey(shiftDateKey(dateKey, 1))}
           onPickDate={(dk) => setDateKey(dk)}
           syncState={syncState} onHome={() => setDateKey(todayKey())} />
-        {loadErr && <div className="mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{loadErr}</div>}
+        {loadErr && (
+          <div className="mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
+            {loadErr}
+            <button onClick={() => window.location.reload()} className="block mt-2 text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-1.5 hover:bg-white/15">🔄 Dobara koshish karo</button>
+          </div>
+        )}
         {!day ? (
           <div className="py-16 text-center text-neutral-400">Loading…</div>
         ) : tab === "today" ? (
@@ -1501,6 +1506,59 @@ function WeightChart({ points }) {
 
 // ---------- Settings ----------
 // ---------- Backup / Restore (hack-proof insurance) ----------
+// ---------- Connection self-test (bar-bar "data nahi dikh raha" ka doctor) ----------
+function SelfTestCard({ profile }) {
+  const [out, setOut] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true); setOut(null);
+    const lines = [];
+    const t0 = Date.now();
+    try {
+      try {
+        await getDay(todayKey(), profile);
+        lines.push("✅ Today doc read OK");
+      } catch (e) {
+        const m = String(e.message || "");
+        lines.push(/404/i.test(m) ? "✅ Today read OK (naya din khali hai)" : `❌ Today read FAIL: ${m.slice(0, 120)}`);
+      }
+      try {
+        const docs = await listRecent(profile, 40);
+        lines.push(`✅ History fetch OK — ${docs.length} din mile`);
+      } catch (e) {
+        lines.push(`❌ History fetch FAIL: ${String(e.message).slice(0, 120)}`);
+      }
+      try {
+        await getSharedAI();
+        lines.push("✅ Couple doc read OK (membership + shared config)");
+      } catch (e) {
+        lines.push(`❌ Couple read FAIL: ${String(e.message).slice(0, 120)}`);
+      }
+      try {
+        const sess = getSession();
+        lines.push(`👤 Login: ${sess ? `${sess.email || sess.uid} (uid ${String(sess.uid).slice(0, 6)}…)` : "NAHI — login pe jao"}`);
+      } catch {}
+    } catch {}
+    const ss = syncStatus();
+    if (ss.lastMsg && ss.lastAt > t0 - 60000) lines.push(`🔎 Last server error: HTTP ${ss.lastCode} — ${ss.lastMsg}`);
+    if (!ss.failCount && ss.okAt) lines.push(`🟢 Last success: ${new Date(ss.okAt).toLocaleTimeString("en-IN")}`);
+    setOut(lines);
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <p className="font-semibold text-sm">🩺 Server connection check</p>
+      <p className="text-[11px] text-neutral-500 mt-1">Data nahi dikhe to pehle YE chalao — exact problem hi dikh jayegi.</p>
+      <Btn className="mt-2 w-full" onClick={run} disabled={busy}>{busy ? "Test chal raha…" : "🔍 Check karo"}</Btn>
+      {out && (
+        <div className="mt-2.5 space-y-1">
+          {out.map((l, i) => <p key={i} className="text-[11px] text-neutral-300 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 break-words">{l}</p>)}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function BackupCard({ profile }) {
   const [busy, setBusy] = useState("");
   const fileRef = useRef(null);
@@ -1784,6 +1842,9 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         {csvMsg && <p className="text-xs text-lime-300 mt-2">{csvMsg}</p>}
         <p className="text-[11px] text-neutral-500 mt-3">Data Firestore (healthwish-6ca22) me sync hota hai — Android app wahi DB use karti hai, dono me same dikhega.</p>
       </Card>
+
+      {/* Self-test */}
+      <SelfTestCard profile={profile} />
 
       {/* Backup */}
       <BackupCard profile={profile} />
