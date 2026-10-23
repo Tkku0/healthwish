@@ -245,6 +245,26 @@ export async function setPartnerEmails(emails) {
 }
 
 // ---- shared AI config (tumne set ki ho to partner ko bhi chale) ----
+// NOTE: galti-khane ka rakam — getSharedAI errors ko khata hai (return null).
+// Diagnostic ke liye rawCoupleProbe use karo jo asli status batata hai.
+export async function rawCoupleProbe() {
+  try {
+    const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+    let hint = "";
+    try {
+      const j = await res.json();
+      const f = (j.fields && Object.keys(j.fields)) || [];
+      hint = `fields: ${f.length ? f.join(",") : "khali"}`;
+    } catch {
+      hint = "body-parse-fail";
+    }
+    return `OK HTTP ${res.status} — ${hint}`;
+  } catch (e) {
+    const code = e && e.status ? `HTTP ${e.status}` : "HTTP ?";
+    return `ERR ${code} — ${String((e && e.message) || e).slice(0, 100)}`;
+  }
+}
+
 export async function getSharedAI() {
   try {
     const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
-  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus,
+  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus, rawCoupleProbe,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -1530,7 +1530,7 @@ function SelfTestCard({ profile }) {
       }
       try {
         await getSharedAI();
-        lines.push("✅ Couple doc read OK (membership + shared config)");
+        lines.push(`🔎 Couple doc read: ${await rawCoupleProbe()}`);
       } catch (e) {
         lines.push(`❌ Couple read FAIL: ${String(e.message).slice(0, 120)}`);
       }
