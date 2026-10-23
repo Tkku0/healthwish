@@ -156,11 +156,15 @@ export async function registerMembership(email) {
   if (!token || !email) return;
   const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
   let doc = null;
+  let docState = "unknown"; // found | notfound | forbidden | unknown
   try {
     const res = await fsFetch(url);
-    doc = await res.json();
-  } catch {
-    doc = null; // 404 ya (rules ke baad) 403 — dono me create koshiysh
+    doc = await res.json(); docState = "found";
+  } catch (e) {
+    const m = String(e.message || "");
+    if (/404|not-found/i.test(m)) docState = "notfound";
+    else if (/403|permission/i.test(m)) docState = "forbidden";
+    doc = null;
   }
   let members = [];
   let partnerEmails = [];
@@ -179,21 +183,23 @@ export async function registerMembership(email) {
       members: { arrayValue: { values: members.map((m) => ({ stringValue: m })) } },
       partnerEmails: { arrayValue: { values: partnerEmails.map((m) => ({ stringValue: m })) } },
     };
-    if (doc) {
+    if (docState === "found") {
       const mask = ["members", "partnerEmails"].map((f) => `updateMask.fieldPaths=${f}`).join("&");
       await fsFetch(`${url}&${mask}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields }),
       });
-    } else {
-      // fixed-ID doc create — PATCH (bina updateMask) existing doc create/replace karta hai
+    } else if (docState === "notfound") {
+      // fixed-ID doc create — PATCH (bina updateMask) sirf ABSENT doc ko create karta hai.
+      // NOTE: 403/permission-gadbad me hum PATCH ABORT karte hain — warna poora couple doc
+      // replace ho ke members/partnerEmails sirf is device ka ban jata (partner kick!) — ye tha clobber bug.
       await fsFetch(url, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields }),
       });
-    }
+    } // forbidden/unknown: kuch nahi karte — partner ka members/partnerEmails data safe rehta hai
   } catch {
     // rules strict bane to bhi web chalega agar pehle se member tha — chup raho
   }
