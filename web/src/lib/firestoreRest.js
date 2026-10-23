@@ -161,10 +161,10 @@ async function appendMembership(uid, email) {
       writes: [{
         transform: {
           document: docPath,
-          fieldTransforms: {
-            members: { appendMissingElements: { values: [{ stringValue: uid }] } },
-            partnerEmails: { appendMissingElements: { values: [{ stringValue: String(email).toLowerCase() }] } },
-          },
+          fieldTransforms: [
+            { fieldPath: "members", appendMissingElements: { values: [{ stringValue: uid }] } },
+            { fieldPath: "partnerEmails", appendMissingElements: { values: [{ stringValue: String(email).toLowerCase() }] } },
+          ],
         },
       }],
     }),
