@@ -151,6 +151,26 @@ async function fsFetch(url, opts) {
 // Login ke baad: apne uid ko couple doc ke members me daal do (email whitelist pe depend).
 // couples/LOVE1 missing → create {members:[uid], partnerEmails:[own email]};
 // exists → agar uid member nahi to members=+uid (maan lo partner ne email whitelist kiya hoga).
+async function appendMembership(uid, email) {
+  // Array-union transforms — doc padhe bina members/partnerEmails me apni uid/email append karo.
+  const docPath = `projects/${PROJECT_ID}/databases/(default)/documents/couples/${COUPLE_ID}`;
+  await fsFetch(`${BASE}:commit?key=${API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      writes: [{
+        transform: {
+          document: docPath,
+          fieldTransforms: {
+            members: { appendMissingElements: { values: [{ stringValue: uid }] } },
+            partnerEmails: { appendMissingElements: { values: [{ stringValue: String(email).toLowerCase() }] } },
+          },
+        },
+      }],
+    }),
+  });
+}
+
 let BOOTSTATE = "";
 export function membershipStatus() { return BOOTSTATE; }
 
@@ -213,9 +233,17 @@ export async function registerMembership(email) {
         BOOTSTATE = "created";
       } catch (e2) {
         const m2 = String(e2.message || "");
-        BOOTSTATE = /409|ALREADY_EXISTS|already exists/i.test(m2)
-          ? "exists-locked"
-          : /403|permission/i.test(m2) ? "create-denied" : "create-fail";
+        if (/409|ALREADY_EXISTS|already exists/i.test(m2)) {
+          // doc exists (purane account ka) — recovery clause se append-repair try karo
+          try {
+            await appendMembership(uid, email);
+            BOOTSTATE = "repaired";
+          } catch (e3) {
+            BOOTSTATE = "exists-locked";
+          }
+        } else {
+          BOOTSTATE = /403|permission/i.test(m2) ? "create-denied" : "create-fail";
+        }
       }
     }
   } catch {

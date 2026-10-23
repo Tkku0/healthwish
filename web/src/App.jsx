@@ -178,7 +178,7 @@ export default function App() {
       try {
         await getValidToken();
         await registerMembership(auth.email);
-        if (membershipStatus() === "created") { location.reload(); return; }
+        if (membershipStatus() === "created" || membershipStatus() === "repaired") { location.reload(); return; }
         // partner ne AI setup share kiya ho to apne device me adopt karo (local key wins)
         const shared = await getSharedAI();
         if (alive && shared) storeShared(shared);
