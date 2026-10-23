@@ -151,6 +151,9 @@ async function fsFetch(url, opts) {
 // Login ke baad: apne uid ko couple doc ke members me daal do (email whitelist pe depend).
 // couples/LOVE1 missing → create {members:[uid], partnerEmails:[own email]};
 // exists → agar uid member nahi to members=+uid (maan lo partner ne email whitelist kiya hoga).
+let BOOTSTATE = "";
+export function membershipStatus() { return BOOTSTATE; }
+
 export async function registerMembership(email) {
   const token = await getValidToken();
   if (!token || !email) return;
@@ -185,21 +188,36 @@ export async function registerMembership(email) {
     };
     if (docState === "found") {
       const mask = ["members", "partnerEmails"].map((f) => `updateMask.fieldPaths=${f}`).join("&");
-      await fsFetch(`${url}&${mask}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields }),
-      });
-    } else if (docState === "notfound") {
-      // fixed-ID doc create — PATCH (bina updateMask) sirf ABSENT doc ko create karta hai.
-      // NOTE: 403/permission-gadbad me hum PATCH ABORT karte hain — warna poora couple doc
-      // replace ho ke members/partnerEmails sirf is device ka ban jata (partner kick!) — ye tha clobber bug.
-      await fsFetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields }),
-      });
-    } // forbidden/unknown: kuch nahi karte — partner ka members/partnerEmails data safe rehta hai
+      try {
+        await fsFetch(`${url}&${mask}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields }),
+        });
+        BOOTSTATE = "member";
+      } catch (eUpd) {
+        BOOTSTATE = /403|permission/i.test(String(eUpd.message)) ? "update-denied" : "update-fail";
+        throw eUpd;
+      }
+    } else {
+      // notfound/forbidden/unknown — SAFE create try karo.
+      // Precondition exists=false ka matlab: agar doc EXISTS hai to Firestore 409 dega,
+      // hum kabhi bhi purana couple doc replace NAHI karenge (wo hi clobber bug tha).
+      // Isse missing-doc deadlock khud theek ho jata hai (missing doc pe rules 403 deta hai).
+      try {
+        await fsFetch(`${url}&currentDocument.exists=false`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields }),
+        });
+        BOOTSTATE = "created";
+      } catch (e2) {
+        const m2 = String(e2.message || "");
+        BOOTSTATE = /409|ALREADY_EXISTS|already exists/i.test(m2)
+          ? "exists-locked"
+          : /403|permission/i.test(m2) ? "create-denied" : "create-fail";
+      }
+    }
   } catch {
     // rules strict bane to bhi web chalega agar pehle se member tha — chup raho
   }

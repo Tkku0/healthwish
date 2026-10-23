@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
-  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus, rawCoupleProbe,
+  healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus, rawCoupleProbe, membershipStatus,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -178,6 +178,7 @@ export default function App() {
       try {
         await getValidToken();
         await registerMembership(auth.email);
+        if (membershipStatus() === "created") { location.reload(); return; }
         // partner ne AI setup share kiya ho to apne device me adopt karo (local key wins)
         const shared = await getSharedAI();
         if (alive && shared) storeShared(shared);
@@ -247,6 +248,11 @@ export default function App() {
         {loadErr && (
           <div className="mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5">
             {loadErr}
+            {(membershipStatus() === "exists-locked" || membershipStatus() === "update-denied") && (
+              <p className="mt-1.5 text-[11px] text-amber-200/90">
+                💡 Couple doc purane account ka hai. Firebase Console → Firestore → couples → LOVE1 → ⋮ → Delete document → app dobara kholo — app khud naya bana lega (days history wapas aa jayegi).
+              </p>
+            )}
             <button onClick={() => window.location.reload()} className="block mt-2 text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-1.5 hover:bg-white/15">🔄 Dobara koshish karo</button>
           </div>
         )}
@@ -1531,6 +1537,10 @@ function SelfTestCard({ profile }) {
       try {
         await getSharedAI();
         lines.push(`🔎 Couple doc read: ${await rawCoupleProbe()}`);
+        try {
+          await registerMembership(profile && getSession() ? getSession().email : "");
+          if (membershipStatus()) lines.push(`🧩 Membership: ${membershipStatus()}`);
+        } catch {}
       } catch (e) {
         lines.push(`❌ Couple read FAIL: ${String(e.message).slice(0, 120)}`);
       }
