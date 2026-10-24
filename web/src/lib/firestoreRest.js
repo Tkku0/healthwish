@@ -133,7 +133,7 @@ async function fsFetch(url, opts) {
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
-      if (j.error && j.error.message) msg = j.error.message;
+      if (j.error && j.error.message) msg = `HTTP ${res.status}: ${j.error.message}`;
     } catch {}
     SYNC.failCount += 1;
     SYNC.lastCode = String(res.status);

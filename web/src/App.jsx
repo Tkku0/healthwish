@@ -146,7 +146,7 @@ export default function App() {
         if (!alive) return;
         docLoadedFor.current = key;
         setDay(emptyDay(dateKey, profile)); setExists(false);
-        if (!/404/i.test(String(e.message))) setLoadErr(`Data load fail — ${String(e.message).slice(0, 120)}`);
+        if (!/404|not.?found|NOT_FOUND/i.test(String(e.message))) setLoadErr(`Data load fail — ${String(e.message).slice(0, 120)}`);
       }
     })();
     return () => { alive = false; };
@@ -1526,7 +1526,7 @@ function SelfTestCard({ profile }) {
         lines.push("✅ Today doc read OK");
       } catch (e) {
         const m = String(e.message || "");
-        lines.push(/404/i.test(m) ? "✅ Today read OK (naya din khali hai)" : `❌ Today read FAIL: ${m.slice(0, 120)}`);
+        lines.push(/404|not.?found|NOT_FOUND/i.test(m) ? "✅ Today read OK (naya din khali hai)" : `❌ Today read FAIL: ${m.slice(0, 120)}`);
       }
       try {
         const docs = await listRecent(profile, 40);
