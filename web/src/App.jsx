@@ -15,6 +15,8 @@ import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours, taskSch
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
 const DAY_MOODS = ["❤️", "😄", "🙂", "😔", "😤"];
+const WEIGHT_BASE = { Shumu: 78.5, Tkku: 39 };
+const PROFILE_COLORS = { Shumu: "#a3e635", Tkku: "#f472b6" };
 const MEALS = [
   ["breakfast", "Breakfast", "🌅"],
   ["lunch", "Lunch", "☀️"],
@@ -470,10 +472,115 @@ function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, on
   );
 }
 
+// ---------- Combined score trend (Tkku + Shumu) ----------
+function TogetherTrend({ profile, partner, target }) {
+  const [days, setDays] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [mine, theirs] = await Promise.all([
+          listRecent(profile, 14),
+          partner ? listRecent(partner, 14) : Promise.resolve([]),
+        ]);
+        const map = new Map();
+        const put = (docs, key) => (docs || []).forEach((d) => {
+          const dk = d.dateKey || String(d.id || "").slice(0, 10);
+          if (!dk) return;
+          const cur = map.get(dk) || { dateKey: dk };
+          cur[key] = dailyScore(d, target).score;
+          map.set(dk, cur);
+        });
+        put(mine, "a");
+        put(theirs, "b");
+        const rows = [...map.values()].sort((x, y) => (x.dateKey < y.dateKey ? -1 : 1)).slice(-10);
+        if (alive) setDays(rows);
+      } catch { if (alive) setDays([]); }
+    })();
+    return () => { alive = false; };
+  }, [profile, partner, target]);
+
+  if (!partner) return null;
+  const colorA = PROFILE_COLORS[profile] || "#a3e635";
+  const colorB = PROFILE_COLORS[partner] || "#f472b6";
+  const W = 320, H = 120, PAD = 12;
+  const n = days ? days.length : 0;
+  const x = (i) => (n <= 1 ? W / 2 : PAD + (i * (W - PAD * 2)) / (n - 1));
+  const y = (v) => H - PAD - (Math.max(0, Math.min(100, v)) / 100) * (H - PAD * 2);
+  const pathFor = (key) => {
+    let d = "", pen = false;
+    (days || []).forEach((row, i) => {
+      if (row[key] == null) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(row[key]).toFixed(1)} `;
+      pen = true;
+    });
+    return d.trim();
+  };
+  const avgOf = (key) => {
+    const vals = (days || []).map((r) => r[key]).filter((v) => v != null);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  };
+  const pathA = pathFor("a"), pathB = pathFor("b");
+  const avgA = avgOf("a"), avgB = avgOf("b");
+  const lastOf = (key) => {
+    for (let i = (days || []).length - 1; i >= 0; i--) if (days[i][key] != null) return { x: x(i), y: y(days[i][key]), v: days[i][key] };
+    return null;
+  };
+  const dotA = lastOf("a"), dotB = lastOf("b");
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <p className="font-semibold">💞 Score trend</p>
+        <span className="text-[10px] text-neutral-500">dono ka combined · last {n || "—"} din</span>
+      </div>
+      {days === null ? (
+        <p className="text-xs text-neutral-500 mt-3">Trend nikal raha hoon…</p>
+      ) : n < 1 ? (
+        <p className="text-xs text-neutral-500 mt-3">Dono ke din log hote hi yahan trend dikhega 🌱</p>
+      ) : (
+        <>
+          <div className="flex gap-4 mt-1.5 text-[11px]">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: colorA }} />{profile}{avgA != null && <b className="text-neutral-300">avg {avgA}</b>}</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: colorB }} />{partner}{avgB != null && <b className="text-neutral-300">avg {avgB}</b>}</span>
+          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full mt-1" role="img" aria-label="score trend">
+            <defs>
+              <linearGradient id="ttA" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={colorA} stopOpacity="0.25" />
+                <stop offset="100%" stopColor={colorA} stopOpacity="0" />
+              </linearGradient>
+              <linearGradient id="ttB" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={colorB} stopOpacity="0.25" />
+                <stop offset="100%" stopColor={colorB} stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {[0, 25, 50, 75, 100].map((g) => (
+              <line key={g} x1={PAD} x2={W - PAD} y1={y(g)} y2={y(g)} stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+            ))}
+            {pathA && <path d={`${pathA} L${x(n - 1)},${H - PAD} L${x(0)},${H - PAD} Z`} fill="url(#ttA)" />}
+            {pathB && <path d={`${pathB} L${x(n - 1)},${H - PAD} L${x(0)},${H - PAD} Z`} fill="url(#ttB)" />}
+            {pathA && <path d={pathA} fill="none" stroke={colorA} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" pathLength="1" className="hw-draw" />}
+            {pathB && <path d={pathB} fill="none" stroke={colorB} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" pathLength="1" className="hw-draw" style={{ animationDelay: "0.15s" }} />}
+            {dotA && <circle cx={dotA.x} cy={dotA.y} r="3.2" fill={colorA} className="hw-dotpulse" />}
+            {dotB && <circle cx={dotB.x} cy={dotB.y} r="3.2" fill={colorB} className="hw-dotpulse" style={{ animationDelay: "0.4s" }} />}
+          </svg>
+          <div className="flex justify-between text-[9px] text-neutral-600 mt-0.5">
+            <span>{days[0].dateKey.slice(5)}</span>
+            <span>{days[n - 1].dateKey.slice(5)}</span>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ---------- Today ----------
 function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, persist, partner, profile }) {
   const [mealEdit, setMealEdit] = useState(null); // "breakfast" ...
   const [aiOpen, setAiOpen] = useState(false);
+  const wNow = day.weightKg > 0 ? day.weightKg : (WEIGHT_BASE[profile] ?? 60);
+  const adjustWeight = (d) => set("weightKg", Math.round(Math.max(20, Math.min(250, wNow + d)) * 10) / 10);
   const total = dayTotal(day);
   const pct = target ? Math.min(140, Math.round((total / target) * 100)) : 0;
   const mTot = dayMacros(day);
@@ -486,6 +593,9 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
       {/* Score top pe */}
       <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} partnerName={partner} />
+
+      {/* Combined trend — dono ka score ek saath */}
+      <TogetherTrend profile={profile} partner={partner} target={target} />
 
       {/* Sleep — score ke turant niche */}
       <SleepCard day={day} dateKey={dateKey} set={set} persist={persist} profile={profile} />
@@ -575,13 +685,27 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
       {/* Weight */}
       <Card>
-        <p className="font-semibold mb-2">⚖️ Weight</p>
-        {day.weightKg > 0 && <p className="text-xs text-neutral-400 mb-2">Aaj: <b className="text-white">{day.weightKg} kg</b></p>}
-        <div className="flex gap-2">
-          <input type="number" step="0.1" inputMode="decimal" placeholder="kg" defaultValue={day.weightKg > 0 ? day.weightKg : ""}
-            onBlur={(e) => { const v = Math.round(Number(e.target.value) * 10) / 10; set("weightKg", v || 0); }}
-            className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
-          <span className="text-xs text-neutral-500 self-center">15 din me ek baar bhi chalega 🙂</span>
+        <div className="flex items-center justify-between mb-2.5">
+          <p className="font-semibold">⚖️ Weight</p>
+          <span className="text-[10px] text-neutral-500">{profile} baseline · {WEIGHT_BASE[profile] ?? 60} kg</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={() => adjustWeight(-0.1)} className="w-11 h-11 rounded-2xl bg-white/[0.06] border border-white/10 text-xl font-bold active:scale-90 transition">−</button>
+          <div className="flex-1 text-center">
+            <span key={wNow} className="text-3xl font-extrabold hw-pop inline-block tabular-nums">{wNow.toFixed(1)}</span>
+            <span className="text-sm text-neutral-400"> kg</span>
+            <p className={`text-[10px] mt-0.5 ${day.weightKg > 0 ? "text-lime-300" : "text-neutral-500"}`}>
+              {day.weightKg > 0 ? "aaj logged ✓" : "baseline — ± se adjust karo"}
+            </p>
+          </div>
+          <button onClick={() => adjustWeight(0.1)} className="w-11 h-11 rounded-2xl bg-white/[0.06] border border-white/10 text-xl font-bold active:scale-90 transition">+</button>
+        </div>
+        <div className="flex items-center gap-2 mt-2.5">
+          <input type="number" step="0.1" inputMode="decimal" placeholder="ya exact kg likho"
+            defaultValue={day.weightKg > 0 ? day.weightKg : ""}
+            onBlur={(e) => { const v = Math.round(Number(e.target.value) * 10) / 10; if (v) set("weightKg", Math.max(20, Math.min(250, v))); }}
+            className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-lime-400/60" />
+          <span className="text-[10px] text-neutral-500">±0.1 kg step · 15 din me ek baar bhi chalega 🙂</span>
         </div>
       </Card>
 
@@ -824,38 +948,45 @@ function HabitsCard({ day, taskToggle, persist }) {
   );
 }
 
-// ---------- Water card (splash animation) ----------
+// ---------- Water card (animated wave tank) ----------
 function WaterCard({ water, onChange }) {
-  const [splash, setSplash] = useState([]);
-  const bump = (dir) => {
-    onChange(water + dir);
-    if (dir > 0) {
-      const id = Date.now();
-      setSplash((s) => [...s.slice(-4), { id }]);
-      setTimeout(() => setSplash((s) => s.filter((x) => x.id !== id)), 950);
-    }
-  };
+  const goal = 8;
+  const pct = Math.min(100, Math.round((water / goal) * 100));
+  const level = water === 0 ? 0 : Math.max(7, Math.min(100, (water / goal) * 100));
+  const [drop, setDrop] = useState(0);
+  const bump = (dir) => { onChange(water + dir); if (dir > 0) setDrop((d) => d + 1); };
   return (
-    <div className="hw-card p-4 !bg-gradient-to-br !from-cyan-500/10 !to-blue-500/5 !border-cyan-400/20 relative overflow-hidden">
-      <div className="flex items-center justify-between relative">
+    <div className="hw-card p-4 relative overflow-hidden !border-cyan-400/25 !bg-none" style={{ background: "linear-gradient(165deg, rgba(34,211,238,0.10), rgba(59,130,246,0.03) 55%, rgba(255,255,255,0.02))" }}>
+      <div className="flex items-center justify-between">
         <div>
           <p className="font-semibold">💧 Water</p>
-          <p className="text-xs text-cyan-300/80 mt-0.5">{water} glasses (~{(water * 0.25).toFixed(2)}L){water >= 8 ? " — goal done ✓" : `/8`}</p>
+          <p className="text-xs text-cyan-300/80 mt-0.5">{water}/{goal} glasses · ~{(water * 0.25).toFixed(2)}L {water >= goal ? "— goal done ✓" : ""}</p>
         </div>
-        <div className="flex items-center gap-3 relative">
+        <div className="flex items-center gap-2.5">
           <button onClick={() => bump(-1)} disabled={water === 0}
-            className="w-11 h-11 rounded-full bg-white/10 border border-white/10 text-xl font-bold active:scale-90 transition disabled:opacity-30">−</button>
-          <span key={water} className="w-10 text-center text-2xl font-extrabold hw-pop inline-block">{water}</span>
+            className="w-10 h-10 rounded-full bg-white/10 border border-white/10 text-xl font-bold active:scale-90 transition disabled:opacity-30">−</button>
+          <span key={water} className="w-8 text-center text-2xl font-extrabold hw-pop inline-block tabular-nums">{water}</span>
           <button onClick={() => bump(1)}
-            className="w-11 h-11 rounded-full bg-gradient-to-r from-lime-400 to-emerald-400 text-neutral-900 text-xl font-bold active:scale-90 transition">+</button>
+            className="w-10 h-10 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 text-neutral-900 text-xl font-bold active:scale-90 transition shadow-[0_10px_26px_-10px_rgba(34,211,238,0.7)]">+</button>
         </div>
       </div>
-      {splash.map((s, i) => (
-        <span key={s.id} className="hw-rise absolute pointer-events-none text-xl"
-          style={{ right: `${68 + i * 10}px`, bottom: "34px" }}>💧</span>
-      ))}
-      <div className="mt-3 h-1.5 rounded-full bg-white/10 overflow-hidden">
-        <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-blue-400 hw-barfill" style={{ width: `${Math.min(100, (water / 8) * 100)}%` }} />
+      <div className="relative mt-3 h-36 rounded-[1.25rem] overflow-hidden border border-cyan-400/20 bg-gradient-to-b from-[#0b1622] to-[#0a0f1c]">
+        <div className="absolute inset-0 opacity-[0.06]" style={{ backgroundImage: "repeating-linear-gradient(0deg, transparent 0 17px, #fff 17px 18px)" }} />
+        <div className="absolute inset-x-0 bottom-0 overflow-hidden transition-[height] duration-700 ease-[cubic-bezier(.22,1,.36,1)]" style={{ height: `${level}%` }}>
+          <div className="hw-wave hw-wave-back" />
+          <div className="hw-wave hw-wave-front" />
+          <div className="absolute inset-x-0 top-2.5 bottom-0 bg-gradient-to-b from-cyan-400/35 via-cyan-500/20 to-blue-600/30" />
+          {[0, 1, 2].map((i) => <span key={i} className="hw-bubble" style={{ left: `${22 + i * 26}%`, animationDelay: `${i * 1.3}s` }} />)}
+        </div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-3xl font-extrabold text-white/90 drop-shadow-[0_2px_14px_rgba(0,0,0,0.65)] tabular-nums">{pct}%</span>
+        </div>
+        {water >= goal && (
+          <div className="absolute inset-x-0 top-2 flex justify-center gap-4 text-sm pointer-events-none">
+            {[0, 1, 2, 3].map((i) => <span key={i} className="hw-float" style={{ animationDelay: `${i * 0.4}s` }}>✨</span>)}
+          </div>
+        )}
+        {drop > 0 && <span key={drop} className="hw-rise absolute right-10 bottom-10 text-2xl pointer-events-none">💧</span>}
       </div>
     </div>
   );
