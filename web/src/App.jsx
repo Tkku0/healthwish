@@ -12,7 +12,7 @@ import {
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours, taskScheduled } from "./lib/score.js";
-import { getNotifyCfg, saveNotifyCfg, notifGranted, askNotif, notify, tickWater, tickMed } from "./lib/reminders.js";
+import { getNotifyCfg, saveNotifyCfg, notifGranted, askNotif, notify, tickWater, tickMed, getTonePref, setTonePref, playTone, primeAudio, saveCustomTone } from "./lib/reminders.js";
 
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
@@ -633,7 +633,7 @@ function ReminderEngine({ day, profile }) {
   dayRef.current = day;
   useEffect(() => {
     if (!profile) return;
-    const tick = () => { if (!dayRef.current) return; tickWater(getNotifyCfg()); tickMed(dayRef.current); };
+    const tick = () => { if (!dayRef.current) return; tickWater(getNotifyCfg(), dayRef.current); tickMed(dayRef.current); };
     const t0 = setTimeout(tick, 8000);
     const iv = setInterval(tick, 45000);
     return () => { clearTimeout(t0); clearInterval(iv); };
@@ -991,6 +991,25 @@ function WeekReport({ profile, partner, target }) {
 function ReminderSettings() {
   const [cfg, setCfg] = useState(getNotifyCfg());
   const [perm, setPerm] = useState(notifGranted());
+  const [tone, setToneState] = useState(getTonePref());
+  const [toneErr, setToneErr] = useState("");
+  const toneRef = useRef(null);
+  const pickTone = (v) => {
+    primeAudio();
+    setTonePref(v);
+    setToneState(v);
+    if (v !== "none") setTimeout(playTone, 60);
+  };
+  const onToneFile = async (f) => {
+    if (!f) return;
+    setToneErr("");
+    try {
+      await saveCustomTone(f);
+      setToneState("custom");
+      primeAudio();
+      setTimeout(playTone, 80);
+    } catch (e) { setToneErr(String(e.message || e).slice(0, 100)); }
+  };
   const update = (patch) => {
     const next = { ...cfg, ...patch };
     setCfg(next); saveNotifyCfg(next);
@@ -1006,7 +1025,7 @@ function ReminderSettings() {
         <p className="font-semibold text-sm">🔔 Reminders</p>
         <Chip on={cfg.on} onClick={() => update({ on: !cfg.on })}>{cfg.on ? "ON" : "OFF"}</Chip>
       </div>
-      <p className="text-[11px] text-neutral-500 mt-1.5">Paani reminder + medicine/vitamin habits ke set time pe notification. App khula ho (ya background me PWA) tabhi fire hota hai.</p>
+      <p className="text-[11px] text-neutral-500 mt-1.5">Smart paani reminder — sirf tab jab <b className="text-neutral-300">2 ghante se paani log nahi hua</b> aur target adhoora ho. Medicine/vitamin habits apne set time pe. App khula/PWA running ho tabhi fire hota hai.</p>
       {!perm && <Btn className="w-full mt-2.5" onClick={ask}>Allow notifications</Btn>}
       {perm && (
         <div className="grid grid-cols-3 gap-2 mt-3">
@@ -1021,7 +1040,21 @@ function ReminderSettings() {
           </label>
         </div>
       )}
-      <p className="text-[10px] text-neutral-600 mt-2">💊 Medicine/vitamins habit pe time set karo (e.g. 09:00 PM) — us waqt reminder aayega.</p>
+      <div className="mt-3 pt-3 border-t border-white/10">
+        <p className="text-[11px] text-neutral-300 font-semibold mb-1.5">🎵 Reminder tone</p>
+        <div className="flex gap-1.5 flex-wrap">
+          {[["chime", "Chime"], ["bell", "Bell"], ["soft", "Soft"], ["none", "Off"]].map(([k, l]) => (
+            <Chip key={k} on={tone === k} onClick={() => pickTone(k)}>{l}</Chip>
+          ))}
+          <Chip on={tone === "custom"} onClick={() => toneRef.current && toneRef.current.click()}>📁 Custom</Chip>
+          {tone !== "none" && <Chip on={false} onClick={() => { primeAudio(); playTone(); }}>▶ Test</Chip>}
+        </div>
+        <input ref={toneRef} type="file" accept="audio/*" className="hidden"
+          onChange={(e) => { onToneFile(e.target.files && e.target.files[0]); e.target.value = ""; }} />
+        {toneErr && <p className="text-[10px] text-red-300 mt-1.5">{toneErr}</p>}
+        <p className="text-[10px] text-neutral-600 mt-1.5">Tone app khula/running ho tab bajta hai (custom file ≤250KB). Background system notification ka sound OS control karta hai.</p>
+      </div>
+      <p className="text-[10px] text-neutral-600 mt-2">💊 Medicine/vitamins habit pe time set karo (e.g. 09:00 PM) — us waqt reminder aayega (10 min window, done habit skip).</p>
     </Card>
   );
 }
