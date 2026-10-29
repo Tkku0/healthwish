@@ -6,7 +6,7 @@ import {
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
-  estimateMealNutrition, storeShared, usingShared, istSlot, istNow, getTone, setTone,
+  estimateMealNutrition, analyzeFoodPhoto, storeShared, usingShared, istSlot, istNow, getTone, setTone,
   coupleCompareOn, setCoupleCompare, coachMessage, coachChat,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
@@ -56,6 +56,25 @@ async function sha256(s) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+function fileToDataUrl(file, max = 900, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        const sc = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.width * sc));
+        c.height = Math.max(1, Math.round(img.height * sc));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/jpeg", quality));
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("photo load nahi hui")); };
+    img.src = url;
+  });
+}
 function statusFor(doneTasks) {
   const n = doneTasks;
   return n === 0 ? ["Get started 💪", "from-slate-600 to-slate-500"]
@@ -73,20 +92,20 @@ function Card({ className = "", children, ...p }) {
 function Chip({ on, onClick, children, className = "" }) {
   return (
     <button onClick={onClick}
-      className={`px-3 py-1.5 rounded-full text-sm border transition ${on ? "bg-lime-400 text-neutral-900 border-lime-400 font-semibold" : "bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10"} ${className}`}>
+      className={`px-3.5 py-1.5 rounded-full text-sm border transition active:scale-95 ${on ? "bg-gradient-to-r from-lime-400 to-emerald-400 text-neutral-900 border-transparent font-semibold shadow-[0_8px_20px_-10px_rgba(163,230,53,0.6)]" : "bg-white/[0.04] border-white/10 text-neutral-300 hover:bg-white/10"} ${className}`}>
       {children}
     </button>
   );
 }
 function Btn({ children, onClick, kind = "primary", className = "", disabled }) {
   const styles = {
-    primary: "bg-gradient-to-r from-lime-400 to-emerald-400 text-neutral-900 font-bold",
-    ghost: "bg-white/5 border border-white/10 text-neutral-200 hover:bg-white/10",
-    danger: "bg-red-500/15 border border-red-500/30 text-red-300",
+    primary: "hw-btn-primary",
+    ghost: "bg-white/[0.05] border border-white/10 text-neutral-200 hover:bg-white/10 active:scale-[0.97]",
+    danger: "bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/20 active:scale-[0.97]",
   };
   return (
     <button disabled={disabled} onClick={onClick}
-      className={`px-4 py-2 rounded-xl text-sm transition disabled:opacity-40 ${styles[kind]} ${className}`}>
+      className={`px-4 py-2.5 rounded-2xl text-sm transition disabled:opacity-40 ${styles[kind]} ${className}`}>
       {children}
     </button>
   );
@@ -221,24 +240,26 @@ export default function App() {
   const doneCount = (day?.tasks || []).filter((t) => t.done).length;
 
   const nav = (
-    <nav className="fixed bottom-0 inset-x-0 z-40 bg-[#15151d]/95 backdrop-blur border-t border-white/10">
-      <div className="max-w-lg mx-auto grid grid-cols-3">
-        {[
-          ["today", "Today", "☀️",],
-          ["history", "History", "📅"],
-          ["settings", "Settings", "⚙️"],
-        ].map(([k, label, icon]) => (
-          <button key={k} onClick={() => { setTab(k); if (k === "today") setDateKey(todayKey()); }}
-            className={`py-3 text-xs flex flex-col items-center gap-0.5 ${tab === k ? "text-lime-400" : "text-neutral-400"}`}>
-            <span className="text-lg">{icon}</span>{label}
-          </button>
-        ))}
+    <nav className="fixed bottom-3 inset-x-0 z-40 px-4">
+      <div className="max-w-lg mx-auto">
+        <div className="hw-dock grid grid-cols-3 p-1.5 gap-1">
+          {[
+            ["today", "Today", "☀️",],
+            ["history", "History", "📅"],
+            ["settings", "Settings", "⚙️"],
+          ].map(([k, label, icon]) => (
+            <button key={k} onClick={() => { setTab(k); if (k === "today") setDateKey(todayKey()); }}
+              className={`hw-dockitem py-2 rounded-2xl text-[11px] font-semibold flex flex-col items-center gap-0.5 ${tab === k ? "hw-dock-active" : "text-neutral-400 hover:text-neutral-200"}`}>
+              <span className="text-lg leading-none">{icon}</span>{label}
+            </button>
+          ))}
+        </div>
       </div>
     </nav>
   );
 
   return (
-    <div className="min-h-full pb-24">
+    <div className="min-h-full pb-32">
       <div className="max-w-lg mx-auto px-4 pt-6">
         <Header profile={profile} switchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
           dateKey={dateKey} onPrev={() => setDateKey(shiftDateKey(dateKey, -1))}
@@ -310,13 +331,15 @@ function ProfileGate({ onPick, installEvt }) {
           📲 Install HealthWish app
         </button>
       )}
-      <div className="text-6xl mb-4">💚</div>
-      <h1 className="text-3xl font-extrabold hw-gradient-text">HealthWish</h1>
-      <p className="text-sm text-neutral-400 mt-2 mb-8 max-w-xs">Diet • Calories • Water • Sleep • Weight<br />Tum dono ke liye, same data.</p>
-      <div className="flex gap-3 mb-6">
+      <div className="w-20 h-20 mb-5 rounded-[1.75rem] bg-gradient-to-br from-lime-300 via-emerald-400 to-teal-400 p-[2px] shadow-[0_18px_50px_-18px_rgba(74,222,128,0.55)]">
+        <div className="w-full h-full rounded-[1.65rem] bg-[#0c0c13] flex items-center justify-center text-4xl">💚</div>
+      </div>
+      <h1 className="text-4xl font-extrabold hw-gradient-text tracking-tight">HealthWish</h1>
+      <p className="text-sm text-neutral-400 mt-2.5 mb-9 max-w-xs leading-relaxed">Diet • Calories • Water • Sleep • Weight<br />Tum dono ke liye, same data.</p>
+      <div className="flex gap-3 mb-7">
         {PROFILE_PRESETS.map((p) => (
           <button key={p} onClick={() => onPick(p)}
-            className="px-8 py-6 rounded-2xl bg-white/5 border border-white/10 text-xl font-bold hover:border-lime-400/60 hover:bg-white/10 transition">
+            className="px-9 py-6 rounded-3xl bg-white/[0.05] border border-white/10 text-xl font-bold hover:border-lime-400/60 hover:bg-white/10 hover:shadow-[0_16px_40px_-20px_rgba(163,230,53,0.5)] active:scale-95 transition">
             {p}
           </button>
         ))}
@@ -349,9 +372,11 @@ function AuthScreen({ onAuth, onSkip }) {
   };
   return (
     <div className="min-h-full flex flex-col items-center justify-center px-6 text-center">
-      <div className="text-6xl mb-4">💚</div>
-      <h1 className="text-3xl font-extrabold hw-gradient-text">HealthWish</h1>
-      <p className="text-sm text-neutral-400 mt-2 mb-8">Apne account se login karo</p>
+      <div className="w-20 h-20 mb-5 rounded-[1.75rem] bg-gradient-to-br from-lime-300 via-emerald-400 to-teal-400 p-[2px] shadow-[0_18px_50px_-18px_rgba(74,222,128,0.55)]">
+        <div className="w-full h-full rounded-[1.65rem] bg-[#0c0c13] flex items-center justify-center text-4xl">💚</div>
+      </div>
+      <h1 className="text-4xl font-extrabold hw-gradient-text tracking-tight">HealthWish</h1>
+      <p className="text-sm text-neutral-400 mt-2.5 mb-8">Apne account se login karo</p>
       <div className="w-full max-w-xs space-y-3 text-left">
         <Field label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tum@example.com" autoFocus />
         <Field label="Password" type="password" value={pass} onChange={(e) => setPass(e.target.value)}
@@ -417,30 +442,30 @@ function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, on
     catch { dateRef.current.click && dateRef.current.click(); }
   };
   return (
-    <div className="flex items-center justify-between mb-4">
+    <div className="flex items-center justify-between gap-2 mb-5">
       <button onClick={switchProfile} title="Profile switch"
-        className="flex items-center gap-2.5 bg-white/5 border border-white/10 pl-1.5 pr-4 py-1.5 rounded-full hover:bg-white/10 transition">
-        <span className="w-8 h-8 rounded-full bg-gradient-to-br from-lime-400 to-emerald-500 flex items-center justify-center text-neutral-900 font-bold text-sm">
-          {profile.slice(0, 1).toUpperCase()}
+        className="flex items-center gap-2.5 bg-white/[0.05] border border-white/10 pl-1.5 pr-3.5 py-1.5 rounded-full hover:bg-white/10 active:scale-95 transition">
+        <span className="w-8 h-8 rounded-full bg-gradient-to-br from-lime-300 via-emerald-400 to-teal-400 p-[2px]">
+          <span className="w-full h-full rounded-full bg-[#0c0c13] flex items-center justify-center text-lime-300 font-bold text-sm">
+            {profile.slice(0, 1).toUpperCase()}
+          </span>
         </span>
-        <span className="font-semibold">{profile}</span>
+        <span className="font-semibold text-sm">{profile}</span>
         <span className="text-neutral-500 text-xs">⇅</span>
       </button>
-      <div className="flex items-center gap-1">
-        <button onClick={onPrev} className="w-10 h-10 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-90 transition">←</button>
+      <div className="flex items-center gap-1.5">
+        <button onClick={onPrev} className="w-9 h-9 rounded-full bg-white/[0.04] border border-white/10 hover:bg-white/10 active:scale-90 transition text-neutral-300">←</button>
         <button onClick={openPicker} title="Date picker"
-          className="px-4 py-2.5 text-sm font-extrabold min-w-28 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 transition">
+          className="relative px-4 py-2 text-sm font-bold min-w-28 rounded-2xl bg-white/[0.04] border border-white/10 hover:bg-white/10 active:scale-95 transition">
           {prettyDate(dateKey)}
           <input ref={dateRef} type="date" value={dateKey} max={todayKey()} tabIndex={-1}
             onChange={(e) => e.target.value && onPickDate && onPickDate(e.target.value)}
             className="absolute opacity-0 pointer-events-none w-0 h-0" aria-hidden="true" />
         </button>
         <button onClick={onNext} disabled={dateKey === todayKey()}
-          className="w-10 h-10 rounded-full bg-white/5 border border-white/10 disabled:opacity-25 hover:bg-white/10 active:scale-90 transition">→</button>
+          className="w-9 h-9 rounded-full bg-white/[0.04] border border-white/10 disabled:opacity-25 hover:bg-white/10 active:scale-90 transition text-neutral-300">→</button>
+        <span title="Sync status" className={`w-2.5 h-2.5 rounded-full ml-0.5 ${syncState === "saving" ? "bg-amber-300 animate-pulse" : syncState === "saved" ? "bg-lime-400" : "bg-white/15"}`} />
       </div>
-      <span className={`text-xs ${syncState === "saving" ? "text-amber-300" : syncState === "saved" ? "text-lime-400" : "text-neutral-600"}`}>
-        {syncState === "saving" ? "☁ Syncing…" : syncState === "saved" ? "✓ Synced" : "☁"}
-      </span>
     </div>
   );
 }
@@ -627,7 +652,7 @@ function TaskEditSheet({ task, onSave, onClose, onDelete }) {
   const [dur, setDur] = useState(String(task.durMin || ""));
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg mx-auto hw-card !rounded-b-none p-5 pb-8 space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <p className="font-bold text-lg">✏️ Habit edit</p>
           <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
@@ -1257,11 +1282,54 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
   const [kcal, setKcal] = useState(day[meal + "Kcal"] || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [preview, setPreview] = useState(null); // {protein,...} estimate preview
+  const [preview, setPreview] = useState(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoErr, setPhotoErr] = useState("");
+  const [photoItems, setPhotoItems] = useState(null);
+  const [photoNotes, setPhotoNotes] = useState("");
+  const fileRef = useRef(null);
+
+  const photoTotal = useMemo(() => {
+    const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
+    for (const it of photoItems || []) for (const k of Object.keys(t)) t[k] += Number(it[k]) || 0;
+    return t;
+  }, [photoItems]);
+
+  const onPhoto = async (file) => {
+    if (!file) return;
+    if (!aiOn) { setPhotoErr("Pehle Settings me AI key configure karo 🙂"); return; }
+    setPhotoErr(""); setPhotoBusy(true); setPhotoItems(null); setPhotoNotes("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const res = await analyzeFoodPhoto(dataUrl);
+      setPhotoItems(res.items);
+      setPhotoNotes(res.notes || "");
+    } catch (e) { setPhotoErr(String(e.message || e)); }
+    setPhotoBusy(false);
+  };
+
+  const updItem = (idx, k, v) => setPhotoItems((arr) => arr.map((it, i) => (i === idx ? { ...it, [k]: k === "name" || k === "qty" ? v : String(v).replace(/[^0-9]/g, "").slice(0, 5) } : it)));
+  const delItem = (idx) => setPhotoItems((arr) => arr.filter((_, i) => i !== idx));
+  const addItem = () => setPhotoItems((arr) => [...(arr || []), { name: "", qty: "", kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 }]);
+
+  const confirmPhoto = () => {
+    const valid = (photoItems || []).filter((it) => it.name.trim());
+    if (!valid.length) { setPhotoErr("Koi item nahi hai — photo dobara lo ya manually likho"); return; }
+    const sum = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
+    for (const it of valid) for (const k of Object.keys(sum)) sum[k] += Number(it[k]) || 0;
+    const summary = valid.map((it) => [it.qty.trim(), it.name.trim()].filter(Boolean).join(" ")).join(" + ");
+    const patch = {
+      [meal]: day[meal] ? `${day[meal]} + ${summary}` : summary,
+      [meal + "Kcal"]: (Number(day[meal + "Kcal"]) || 0) + sum.kcal,
+    };
+    for (const [F, K] of MACRO_FIELDS) patch[meal + F] = (Number(day[meal + F]) || 0) + sum[K];
+    persist({ ...day, ...patch });
+    onClose();
+  };
+
   const save = async () => {
     setBusy(true); setErr("");
     let nut = preview;
-    // kcal khali ya macros missing + AI on → save se pehle full macro count
     if (aiOn && (text || "").trim() && (!Number(kcal) || !nut)) {
       const res = await estimateMealNutrition(text, () => {});
       if (res && !res.error) nut = res;
@@ -1288,14 +1356,77 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
     else { setErr((res && res.error) || "estimate fail"); }
     setBusy(false);
   };
+
+  const numCls = "w-full text-center bg-black/30 border border-white/10 rounded-lg px-1 py-1.5 text-[11px] outline-none focus:border-lime-400/60 tabular-nums";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg mx-auto hw-card !rounded-b-none p-5 pb-8 space-y-4" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-md" onClick={onClose}>
+      <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <p className="font-bold text-lg">{icon} {label}</p>
           <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
         </div>
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus
+
+        {/* Photo -> AI */}
+        {!photoItems && (
+          <div className="space-y-2">
+            <button onClick={() => fileRef.current && fileRef.current.click()} disabled={photoBusy}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-gradient-to-r from-lime-400/15 to-emerald-400/10 border border-lime-400/30 text-sm font-semibold text-lime-200 hover:bg-lime-400/20 transition disabled:opacity-50">
+              {photoBusy ? "🤖 Photo dekh raha hoon…" : "📷 Photo se AI count karo"}
+            </button>
+            <p className="text-[10px] text-neutral-500 text-center">Roti, sabzi, dahi, salad — sab AI khud pehchan lega</p>
+            <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => { onPhoto(e.target.files && e.target.files[0]); e.target.value = ""; }} />
+          </div>
+        )}
+
+        {photoItems && (
+          <div className="space-y-2.5 rounded-2xl border border-lime-400/25 bg-lime-400/5 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold text-lime-200">🤖 AI ne ye pehchana — check/edit karo</p>
+              <button onClick={() => { setPhotoItems(null); setPhotoNotes(""); }} className="text-[10px] text-neutral-400 underline">naya photo</button>
+            </div>
+            {photoItems.map((it, idx) => (
+              <div key={idx} className="rounded-xl border border-white/10 bg-black/30 p-2.5 space-y-1.5">
+                <div className="flex gap-1.5 items-center">
+                  <input value={it.name} onChange={(e) => updItem(idx, "name", e.target.value)} placeholder="food"
+                    className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-lime-400/60" />
+                  <button onClick={() => delItem(idx)} className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 text-xs text-neutral-400">✕</button>
+                </div>
+                <input value={it.qty} onChange={(e) => updItem(idx, "qty", e.target.value)} placeholder="quantity (2 roti · 1 katori)"
+                  className="w-full bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] outline-none focus:border-lime-400/60" />
+                <div className="grid grid-cols-6 gap-1">
+                  {[["kcal", "🔥"], ["protein", "🥩"], ["carbs", "🍞"], ["fat", "🧈"], ["fiber", "🌾"], ["sugar", "🍬"]].map(([k, em]) => (
+                    <label key={k} className="block">
+                      <span className="text-[8px] text-neutral-500 block text-center mb-0.5">{em} {k}</span>
+                      <input value={it[k]} onChange={(e) => updItem(idx, k, e.target.value)} inputMode="numeric" className={numCls} />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <button onClick={addItem} className="w-full text-[11px] py-1.5 rounded-lg border border-dashed border-white/15 text-neutral-400 hover:text-neutral-200">+ item add karo</button>
+            {photoNotes && <p className="text-[10px] text-neutral-400 leading-snug">💬 {photoNotes}</p>}
+            <div className="flex items-center justify-between text-xs rounded-xl bg-black/30 border border-white/10 px-3 py-2 tabular-nums">
+              <span className="text-neutral-300">Total</span>
+              <span className="flex gap-2.5 text-[11px]">
+                <b className="text-lime-300">🔥 {photoTotal.kcal}</b>
+                <span>🥩 {photoTotal.protein}g</span>
+                <span>🍞 {photoTotal.carbs}g</span>
+                <span>🧈 {photoTotal.fat}g</span>
+                <span>🌾 {photoTotal.fiber}g</span>
+              </span>
+            </div>
+            <Btn className="w-full" onClick={confirmPhoto}>✅ Sahi hai — {label} me add karo</Btn>
+          </div>
+        )}
+        {photoErr && <p className="text-xs text-red-300">{photoErr}</p>}
+
+        <div className="flex items-center gap-2 text-[10px] text-neutral-500">
+          <span className="flex-1 h-px bg-white/10" />ya manually likho<span className="flex-1 h-px bg-white/10" />
+        </div>
+
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3}
           placeholder="kya khaya? (2 roti + dal + sabzi)"
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
         {preview && (

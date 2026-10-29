@@ -219,6 +219,60 @@ export async function parseFoodInput(input) {
   };
 }
 
+// ---- Food photo -> itemized Indian food analysis (vision) ----
+// Returns { items:[{name,qty,kcal,protein,carbs,fat,fiber,sugar}], notes }
+export async function analyzeFoodPhoto(dataUrl) {
+  const cfg = getAI();
+  const system =
+    cfg.prompt +
+    "\n\nYou are analyzing a FOOD PHOTO. Identify every distinct food item/component separately " +
+    "(roti/chapati/paratha, sabzi and its type, dal, rice, salad, dahi/curd/raita, papad, chutney, drink, sweet, etc). " +
+    "Assume wheat (gehu) roti for roti/chapati unless clearly different. Estimate quantity the way an Indian household counts it " +
+    "(e.g. '2 medium roti (60g each)', '1 katori toor dal (150g)', '1 medium katori mixed salad (80g)', '1 katori dahi (100g)'). " +
+    "Include visible oil/ghee/butter. Calculate kcal and macros from realistic Indian cooked portions (IFCT 2017). " +
+    'Reply strictly as JSON: {"items":[{"name":"Hindi/English food name","qty":"2 medium roti (~120g)","kcal":int,"protein":int,"carbs":int,"fat":int,"fiber":int,"sugar":int}],"notes":"short Hinglish note"}. ' +
+    "All numbers single integers for each item. If the photo has no food, return items as an empty array and explain in notes.";
+
+  const body = {
+    model: cfg.model,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: [
+        { type: "text", text: "Analyze this meal photo and list every food item with realistic Indian quantity and nutrition." },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ] },
+    ],
+    temperature: 0.2,
+  };
+
+  let out = "";
+  try {
+    out = await postJson(cfg, { ...body, response_format: { type: "json_object" } });
+  } catch (e) {
+    const m = String(e.message || "");
+    // kuch providers vision + json mode ek saath support nahi karte — bina json mode retry
+    if (/json|response_format|400|unsupported|invalid/i.test(m)) {
+      out = await postJson(cfg, body);
+    } else {
+      throw e;
+    }
+  }
+
+  const j = extractJsonObject(out);
+  if (!j || !Array.isArray(j.items)) throw new Error("Photo samajh nahi aayi — dobara try karo (ya vision model use karo: gemini-2.5-flash / gpt-4o-mini)");
+  const num = (v) => Math.max(0, Math.round(Number(v) || 0));
+  const items = j.items
+    .map((it) => ({
+      name: String(it.name || "food").slice(0, 60),
+      qty: String(it.qty || "").slice(0, 60),
+      kcal: num(it.kcal), protein: num(it.protein), carbs: num(it.carbs),
+      fat: num(it.fat), fiber: num(it.fiber), sugar: num(it.sugar),
+    }))
+    .filter((it) => it.name);
+  if (!items.length) throw new Error((j.notes && String(j.notes).slice(0, 90)) || "Photo me khaana nahi mila 🙂");
+  return { items, notes: String(j.notes || "").slice(0, 160) };
+}
+
 export async function testAI() {
   const cfg = getAI();
   const out = await aiCall(
