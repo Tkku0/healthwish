@@ -2034,7 +2034,10 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
   const [photoErr, setPhotoErr] = useState("");
   const [photoItems, setPhotoItems] = useState(null);
   const [photoNotes, setPhotoNotes] = useState("");
-  const fileRef = useRef(null);
+  const camRef = useRef(null);
+  const galRef = useRef(null);
+  const scrollRef = useRef(null);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = 0; }, []);
 
   const photoTotal = useMemo(() => {
     const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
@@ -2108,21 +2111,30 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-md" onClick={onClose}>
-      <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
+      <div className="w-full max-w-lg mx-auto hw-sheet flex flex-col max-h-[94dvh] rounded-t-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/10 shrink-0">
           <p className="font-bold text-lg">{icon} {label}</p>
           <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
         </div>
+        <div ref={scrollRef} className="overflow-y-auto overscroll-contain px-5 py-4 space-y-3">
 
         {/* Photo -> AI */}
         {!photoItems && (
           <div className="space-y-2">
-            <button onClick={() => fileRef.current && fileRef.current.click()} disabled={photoBusy}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl bg-gradient-to-r from-lime-400/15 to-emerald-400/10 border border-lime-400/30 text-sm font-semibold text-lime-200 hover:bg-lime-400/20 transition disabled:opacity-50">
-              {photoBusy ? "🤖 Photo dekh raha hoon…" : "📷 Photo se AI count karo"}
-            </button>
-            <p className="text-[10px] text-neutral-500 text-center">Roti, sabzi, dahi, salad — sab AI khud pehchan lega</p>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => camRef.current && camRef.current.click()} disabled={photoBusy}
+                className="flex items-center justify-center gap-2 px-3 py-3.5 rounded-2xl bg-gradient-to-r from-lime-400/15 to-emerald-400/10 border border-lime-400/30 text-sm font-semibold text-lime-200 hover:bg-lime-400/20 transition disabled:opacity-50">
+                {photoBusy ? "🤖 dekh raha hoon…" : "📷 Camera"}
+              </button>
+              <button onClick={() => galRef.current && galRef.current.click()} disabled={photoBusy}
+                className="flex items-center justify-center gap-2 px-3 py-3.5 rounded-2xl bg-white/5 border border-white/15 text-sm font-semibold text-neutral-200 hover:bg-white/10 transition disabled:opacity-50">
+                🖼️ Gallery
+              </button>
+            </div>
+            <p className="text-[10px] text-neutral-500 text-center">Photo se AI count — camera ya gallery, dono chalega</p>
+            <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => { onPhoto(e.target.files && e.target.files[0]); e.target.value = ""; }} />
+            <input ref={galRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { onPhoto(e.target.files && e.target.files[0]); e.target.value = ""; }} />
           </div>
         )}
@@ -2173,7 +2185,7 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
           <span className="flex-1 h-px bg-white/10" />ya manually likho<span className="flex-1 h-px bg-white/10" />
         </div>
 
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3}
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
           placeholder="kya khaya? (2 roti + dal + sabzi)"
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
         {preview && (
@@ -2187,7 +2199,6 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
             <span>🍬 {preview.sugar}g</span>
           </div>
         )}
-        {err && <p className="text-xs text-red-300">{err}</p>}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[10px] text-neutral-500">Partner reaction</span>
           {["❤️", "😋", "👍", "🔥", "😮"].map((e) => (
@@ -2195,9 +2206,13 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
               className={`w-8 h-8 rounded-lg text-base border ${day[meal + "React"] === e ? "bg-lime-400/20 border-lime-400/50" : "bg-white/5 border-white/10"}`}>{e}</button>
           ))}
         </div>
-        <div className="flex items-end gap-2">
-          <Field label={`Calories (kcal)${aiOn ? " — khali chhodo to AI khud count karega" : ""}`} type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
-          <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖 counting…" : "Save"}</Btn>
+        </div>
+        <div className="shrink-0 px-5 pt-3 pb-[max(14px,env(safe-area-inset-bottom))] border-t border-white/10 bg-[#12121b]">
+          {err && <p className="text-xs text-red-300 mb-2">{err}</p>}
+          <div className="flex items-end gap-2">
+            <Field label={`Calories (kcal)${aiOn ? " — khali chhodo to AI khud count karega" : ""}`} type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
+            <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖 counting…" : "Save"}</Btn>
+          </div>
         </div>
       </div>
     </div>
