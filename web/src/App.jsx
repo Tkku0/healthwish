@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
@@ -663,7 +664,7 @@ function NudgeButton({ profile, partner }) {
     <>
       <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
         className="shrink-0 w-11 rounded-2xl bg-white/5 border border-white/10 text-base hover:border-lime-400/40 transition" title="Reminder bhejo">🔔</button>
-      {open && (
+      {open && createPortal(
         <div className="fixed inset-0 z-[70] flex items-end bg-black/60 backdrop-blur-sm" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); }}>
           <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
@@ -677,7 +678,8 @@ function NudgeButton({ profile, partner }) {
             </div>
             {sent && <p className="text-xs text-lime-300 mt-3">✓ Reminder bhej diya</p>}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
@@ -1160,7 +1162,7 @@ function LabsCard({ profile }) {
           ))}
         </div>
       )}
-      {view && (
+      {view && createPortal(
         <div className="fixed inset-0 z-[75] bg-black/85 flex items-center justify-center p-4" onClick={() => setView(null)}>
           <div className="max-w-lg w-full max-h-full overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between text-neutral-300 text-sm mb-2">
@@ -1169,7 +1171,8 @@ function LabsCard({ profile }) {
             </div>
             <img src={view.dataUrl} alt={view.title || "lab report"} className="w-full rounded-xl" />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </Card>
   );
@@ -1386,7 +1389,7 @@ function TaskEditSheet({ task, onSave, onClose, onDelete }) {
   const [emoji, setEmoji] = useState(task.emoji || "");
   const [time, setTime] = useState(task.time || "");
   const [dur, setDur] = useState(String(task.durMin || ""));
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
@@ -1416,7 +1419,8 @@ function TaskEditSheet({ task, onSave, onClose, onDelete }) {
         })}>Save</Btn>
         <button onClick={onDelete} className="w-full text-xs text-red-300/80 hover:text-red-300 py-1">Habit delete karo</button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -2109,7 +2113,7 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
 
   const numCls = "w-full text-center bg-black/30 border border-white/10 rounded-lg px-1 py-1.5 text-[11px] outline-none focus:border-lime-400/60 tabular-nums";
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end bg-black/70 backdrop-blur-md" onClick={onClose}>
       <div className="w-full max-w-lg mx-auto hw-sheet flex flex-col max-h-[94dvh] rounded-t-3xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-white/10 shrink-0">
@@ -2215,7 +2219,8 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

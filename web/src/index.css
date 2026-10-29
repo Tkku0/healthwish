@@ -90,7 +90,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 .hw-fade-in {
-  animation: hwFade 0.3s ease both;
+  animation: hwFade 0.3s ease;
 }
 @keyframes hwFade {
   from { opacity: 0; transform: translateY(8px); }
