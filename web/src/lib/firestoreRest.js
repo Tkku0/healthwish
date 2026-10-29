@@ -264,6 +264,121 @@ async function authUid() {
   return cachedUid;
 }
 
+// ---- offline write queue (network down -> save later) ----
+const OFFLINE_Q = "hw_offline_q";
+function qRead() { try { return JSON.parse(localStorage.getItem(OFFLINE_Q) || "{}"); } catch { return {}; } }
+function qWrite(q) { try { localStorage.setItem(OFFLINE_Q, JSON.stringify(q)); } catch {} }
+export function pendingCount() { return Object.keys(qRead()).length; }
+export async function flushOffline() {
+  const q = qRead();
+  let done = 0;
+  for (const id of Object.keys(q)) {
+    try {
+      const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;
+      await fsFetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fields: q[id].fields }) });
+      delete q[id]; qWrite(q); done++;
+    } catch (e) {
+      const m = String(e.message || "");
+      if (/^HTTP 4/.test(m)) { delete q[id]; qWrite(q); } // permanent reject — drop
+      else break; // network issue — ruk jao
+    }
+  }
+  return done;
+}
+
+// ---- couple doc extras: nudges / goals / cycle / weekly helpers ----
+async function getCoupleFields() {
+  const res = await fsFetch(`${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`);
+  const j = await res.json();
+  return j.fields || {};
+}
+export async function getNudges() {
+  try {
+    const f = await getCoupleFields();
+    const arr = (((f.nudges || {}).arrayValue) || {}).values || [];
+    return arr.map((v) => fromFs(v)).filter(Boolean);
+  } catch { return []; }
+}
+export async function sendNudge(from, to, text) {
+  const list = await getNudges();
+  const next = [...list.slice(-9), { from, to, text: String(text).slice(0, 90), ts: Date.now() }];
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  await fsFetch(`${url}&updateMask.fieldPaths=nudges`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { nudges: toFs(next) } }),
+  });
+  return next;
+}
+export async function getGoals() {
+  try {
+    const f = await getCoupleFields();
+    const arr = (((f.goals || {}).arrayValue) || {}).values || [];
+    return arr.map((v) => fromFs(v)).filter(Boolean);
+  } catch { return []; }
+}
+export async function saveGoals(list) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  await fsFetch(`${url}&updateMask.fieldPaths=goals`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { goals: toFs(list.slice(0, 30)) } }),
+  });
+}
+export async function getCycle(profile) {
+  try {
+    const f = await getCoupleFields();
+    const mv = f[`cycle_${profile}`];
+    if (!mv || !mv.mapValue) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(mv.mapValue.fields || {})) out[k] = fromFs(v);
+    return out;
+  } catch { return null; }
+}
+export async function setCycle(profile, obj) {
+  const url = `${BASE}/couples/${COUPLE_ID}?key=${API_KEY}`;
+  await fsFetch(`${url}&updateMask.fieldPaths=cycle_${profile}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { [`cycle_${profile}`]: toFs(obj) } }),
+  });
+}
+
+// ---- lab report storage (days collection me lab_* docs — existing rules ke andar) ----
+export async function listLabs(limit = 30) {
+  try {
+    const res = await fsFetch(`${BASE}:runQuery?key=${API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: "days" }], limit: 300 } }),
+    });
+    const rows = await res.json();
+    const out = [];
+    for (const r of rows || []) {
+      if (!r.document) continue;
+      const id = r.document.name.split("/").pop();
+      if (!id.startsWith("lab_")) continue;
+      const o = { id };
+      for (const [k, v] of Object.entries(r.document.fields || {})) o[k] = fromFs(v);
+      if (!o.deleted) out.push(o);
+    }
+    return out.sort((a, b) => (Number(b.ts) || 0) - (Number(a.ts) || 0)).slice(0, limit);
+  } catch { return []; }
+}
+export async function saveLab(lab) {
+  const id = lab.id || `lab_${Date.now().toString(36)}`;
+  const fields = {};
+  for (const [k, v] of Object.entries(lab)) if (k !== "id") fields[k] = toFs(v);
+  await fsFetch(`${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  return id;
+}
+export async function deleteLab(id) {
+  await fsFetch(`${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { deleted: toFs(true), dataUrl: toFs(""), title: toFs("(deleted)") } }),
+  });
+}
+
 // ---- couple membership management (Settings) ----
 export async function getCoupleInfo() {
   try {
@@ -395,9 +510,22 @@ export async function setHealthRemote(profile, obj) {
 export async function getDay(dateKey, ownerName) {
   const id = docIdFor(dateKey, ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;
-  const res = await fsFetch(url);
-  const j = await res.json();
-  return parseDoc(j.name, j.fields);
+  try {
+    const res = await fsFetch(url);
+    const j = await res.json();
+    const doc = parseDoc(j.name, j.fields);
+    try { localStorage.setItem(`hw_daycache_${id}`, JSON.stringify(doc)); } catch {}
+    return doc;
+  } catch (e) {
+    const m = String(e.message || "");
+    if (!/^HTTP \d/.test(m)) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(`hw_daycache_${id}`) || "null");
+        if (cached) return { ...cached, offline: true };
+      } catch {}
+    }
+    throw e;
+  }
 }
 
 export async function existsDay(dateKey, ownerName) {
@@ -424,11 +552,24 @@ export async function saveDay(log) {
   }
   const id = docIdFor(log.dateKey, log.ownerName);
   const url = `${BASE}/couples/${COUPLE_ID}/days/${id}?key=${API_KEY}`;
-  await fsFetch(url, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fields }),
-  });
+  try {
+    await fsFetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields }),
+    });
+    try { localStorage.setItem(`hw_daycache_${id}`, JSON.stringify({ ...merged, id })); } catch {}
+  } catch (e) {
+    const m = String(e.message || "");
+    if (!/^HTTP \d/.test(m)) {
+      const q = qRead();
+      q[id] = { fields, at: Date.now() };
+      qWrite(q);
+      try { localStorage.setItem(`hw_daycache_${id}`, JSON.stringify({ ...merged, id })); } catch {}
+      return { ...merged, id, offline: true };
+    }
+    throw e;
+  }
   return { ...merged, id };
 }
 

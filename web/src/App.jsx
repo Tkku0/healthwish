@@ -3,6 +3,7 @@ import {
   todayKey, shiftDateKey, docIdFor, emptyDay, getDay, saveDay, listRecent, defaultTasks,
   PROFILE_PRESETS, cleanTasks, registerMembership, getCoupleInfo, setPartnerEmails, getSharedAI, setSharedAI,
   healthLocal, saveHealthLocal, getHealthRemote, setHealthRemote, getNoFap, setNoFap, syncStatus, rawCoupleProbe, membershipStatus,
+  getNudges, sendNudge, getGoals, saveGoals, getCycle, setCycle, listLabs, saveLab, deleteLab, pendingCount, flushOffline,
 } from "./lib/firestoreRest.js";
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
@@ -11,6 +12,7 @@ import {
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours, taskScheduled } from "./lib/score.js";
+import { getNotifyCfg, saveNotifyCfg, notifGranted, askNotif, notify, tickWater, tickMed } from "./lib/reminders.js";
 
 // ---------- helpers ----------
 const SLEEP_MOODS = ["😍", "😊", "😐", "🥱", "😩"];
@@ -139,6 +141,7 @@ export default function App() {
   const [installEvt, setInstallEvt] = useState(null);
   const saveTimer = useRef(null);
   const docLoadedFor = useRef("");
+  const [offlineQ, setOfflineQ] = useState(0);
 
   // PWA install prompt + SW
   useEffect(() => {
@@ -217,8 +220,9 @@ export default function App() {
       try {
         const saved = await saveDay(next);
         setExists(true);
-        setSyncState("saved");
-        setTimeout(() => setSyncState("idle"), 1500);
+        setSyncState(saved.offline ? "offline" : "saved");
+        if (!saved.offline) setTimeout(() => setSyncState("idle"), 1500);
+        try { setOfflineQ(pendingCount()); } catch {}
         // weight history turant reflect karo
         if (tab === "history") reloadRecent();
         void saved;
@@ -228,6 +232,34 @@ export default function App() {
       }
     }, 500);
   }, [reloadRecent, tab]);
+
+  // offline queue: net aate hi pending saves flush
+  useEffect(() => {
+    if (!profile) return;
+    const upd = () => { try { setOfflineQ(pendingCount()); } catch {} };
+    const flush = async () => { try { const n = await flushOffline(); if (n) upd(); } catch {} };
+    upd();
+    const iv = setInterval(() => { upd(); flush(); }, 25000);
+    const onOnline = () => { upd(); flush(); };
+    const onOffline = () => setSyncState("offline");
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => { clearInterval(iv); window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
+  }, [profile]);
+
+  // PWA shortcut: ?quick=water -> aaj ek glass +
+  const quickDone = useRef(false);
+  useEffect(() => {
+    if (!day || !profile || quickDone.current) return;
+    quickDone.current = true;
+    try {
+      const u = new URLSearchParams(window.location.search);
+      if (u.get("quick") === "water") {
+        persist({ ...day, waterGlasses: Math.min(20, (Number(day.waterGlasses) || 0) + 1) });
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch {}
+  }, [day?.id]); // eslint-disable-line
 
   if (lockHash && !unlocked) return <LockScreen hash={lockHash} onOk={() => setUnlocked(true)} />;
   if (!auth && !skipAuth) return <AuthScreen onAuth={async (email) => { setAuth(getSession()); try { await registerMembership(email); } catch {} }} onSkip={() => { localStorage.setItem("hw_skip_auth", "1"); setSkipAuth(true); }} />;
@@ -262,6 +294,8 @@ export default function App() {
 
   return (
     <div className="min-h-full pb-32">
+      <NudgePoller profile={profile} />
+      <ReminderEngine day={day} profile={profile} />
       <div className="max-w-lg mx-auto px-4 pt-6">
         <Header profile={profile} switchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
           dateKey={dateKey} onPrev={() => setDateKey(shiftDateKey(dateKey, -1))}
@@ -277,6 +311,12 @@ export default function App() {
               </p>
             )}
             <button onClick={() => window.location.reload()} className="block mt-2 text-xs bg-white/10 border border-white/15 rounded-lg px-3 py-1.5 hover:bg-white/15">🔄 Dobara koshish karo</button>
+          </div>
+        )}
+        {(offlineQ > 0 || syncState === "offline") && (
+          <div className="mt-3 text-[11px] text-amber-200 bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">
+            📡 {syncState === "offline" || !navigator.onLine ? "Offline — " : ""}
+            {offlineQ > 0 ? `${offlineQ} change${offlineQ > 1 ? "s" : ""} pending, net aate hi auto-sync hoga` : "data device me safe hai"}
           </div>
         )}
         {!day ? (
@@ -527,6 +567,11 @@ function TogetherTrend({ profile, partner, target }) {
     return null;
   };
   const dotA = lastOf("a"), dotB = lastOf("b");
+  const wkAvg = (key) => {
+    const v = (days || []).slice(-7).map((r) => r[key]).filter((x) => x != null);
+    return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+  };
+  const wA = wkAvg("a"), wB = wkAvg("b");
 
   return (
     <Card>
@@ -569,7 +614,529 @@ function TogetherTrend({ profile, partner, target }) {
             <span>{days[0].dateKey.slice(5)}</span>
             <span>{days[n - 1].dateKey.slice(5)}</span>
           </div>
+          {wA != null && wB != null && (
+            <div className="mt-2.5 flex items-center justify-between rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-[11px]">
+              <span>🏆 <b className="text-amber-300">{wA === wB ? "Tie" : wA > wB ? profile : partner}</b> is hafte</span>
+              <span className="text-neutral-400"><b style={{ color: colorA }}>{profile} {wA}</b> · <b style={{ color: colorB }}>{partner} {wB}</b></span>
+            </div>
+          )}
         </>
+      )}
+    </Card>
+  );
+}
+
+
+// ---------- Reminder engine (water + medicine habits) ----------
+function ReminderEngine({ day, profile }) {
+  const dayRef = useRef(day);
+  dayRef.current = day;
+  useEffect(() => {
+    if (!profile) return;
+    const tick = () => { if (!dayRef.current) return; tickWater(getNotifyCfg()); tickMed(dayRef.current); };
+    const t0 = setTimeout(tick, 8000);
+    const iv = setInterval(tick, 45000);
+    return () => { clearTimeout(t0); clearInterval(iv); };
+  }, [profile]);
+  return null;
+}
+
+// ---------- Nudge (partner reminder, professional wording) ----------
+const NUDGE_PRESETS = [
+  "Paani peene ka samay ho gaya hai.",
+  "Aaj ka meal log karna baaki hai.",
+  "Habit complete karna baaki hai.",
+  "Aaj ka weight update kar lein.",
+  "So jaane ka samay ho gaya hai.",
+];
+function NudgeButton({ profile, partner }) {
+  const [open, setOpen] = useState(false);
+  const [sent, setSent] = useState(false);
+  const fire = async (text) => {
+    try {
+      await sendNudge(profile, partner, text);
+      setSent(true);
+      setTimeout(() => { setOpen(false); setSent(false); }, 800);
+    } catch (e) { alert(`Reminder nahi gaya — ${String(e.message || e).slice(0, 100)}`); }
+  };
+  return (
+    <>
+      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
+        className="shrink-0 w-11 rounded-2xl bg-white/5 border border-white/10 text-base hover:border-lime-400/40 transition" title="Reminder bhejo">🔔</button>
+      {open && (
+        <div className="fixed inset-0 z-[70] flex items-end bg-black/60 backdrop-blur-sm" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); }}>
+          <div className="w-full max-w-lg mx-auto hw-sheet p-5 pb-8" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-bold">🔔 {partner} ko reminder</p>
+              <button onClick={() => setOpen(false)} className="w-9 h-9 rounded-full bg-white/5 border border-white/10">✕</button>
+            </div>
+            <div className="space-y-2">
+              {NUDGE_PRESETS.map((t) => (
+                <button key={t} onClick={() => fire(t)} className="w-full text-left px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:border-lime-400/40 text-sm">{t}</button>
+              ))}
+            </div>
+            {sent && <p className="text-xs text-lime-300 mt-3">✓ Reminder bhej diya</p>}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+function NudgePoller({ profile }) {
+  const [msg, setMsg] = useState(null);
+  useEffect(() => {
+    if (!profile) return;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const list = await getNudges();
+        const last = Number(localStorage.getItem("hw_nudge_last") || 0);
+        const mine = list.filter((n) => n && n.to === profile && Number(n.ts) > last);
+        if (mine.length) {
+          const n = mine[mine.length - 1];
+          localStorage.setItem("hw_nudge_last", String(n.ts));
+          setMsg(n);
+          notify("Reminder", `${n.from}: ${n.text}`);
+          setTimeout(() => setMsg(null), 12000);
+        }
+      } catch {}
+      busy = false;
+    };
+    const t0 = setTimeout(tick, 3000);
+    const iv = setInterval(tick, 60000);
+    const onOnline = () => tick();
+    window.addEventListener("online", onOnline);
+    return () => { clearTimeout(t0); clearInterval(iv); window.removeEventListener("online", onOnline); };
+  }, [profile]);
+  if (!msg) return null;
+  return (
+    <div className="fixed top-3 left-0 right-0 z-[65] px-4">
+      <div className="max-w-lg mx-auto rounded-2xl bg-[#141420]/95 border border-lime-400/40 px-4 py-3 flex items-center gap-3 shadow-2xl hw-fade-in">
+        <span className="text-xl">🔔</span>
+        <div className="flex-1 min-w-0 text-sm"><b>{msg.from}</b><span className="text-neutral-300"> — {msg.text}</span></div>
+        <button onClick={() => setMsg(null)} className="text-neutral-500 shrink-0">✕</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Gratitude ----------
+function GratitudeCard({ day, set }) {
+  return (
+    <Card>
+      <p className="font-semibold mb-2">🙏 Aaj ki gratitude</p>
+      <input value={day.gratitude || ""} onChange={(e) => set("gratitude", e.target.value.slice(0, 140))}
+        placeholder="Aaj kis cheez ke liye shukriya? (ek line)"
+        className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
+    </Card>
+  );
+}
+
+// ---------- Health pet ----------
+const PET_STAGES = [
+  { e: "🥚", name: "Egg", at: 0 },
+  { e: "🐣", name: "Hatchling", at: 60 },
+  { e: "🐥", name: "Chick", at: 160 },
+  { e: "🐤", name: "Strong Chick", at: 320 },
+  { e: "🦜", name: "HealthWish Bird", at: 600 },
+];
+function PetCard({ profile, day, target }) {
+  const key = `hw_pet_${profile}`;
+  const [pet, setPet] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(key) || "null") || { xp: 0, last: "", fed: "" }; }
+    catch { return { xp: 0, last: "", fed: "" }; }
+  });
+  const save = (np) => { setPet(np); try { localStorage.setItem(key, JSON.stringify(np)); } catch {} };
+  const score = dailyScore(day, target).score;
+  useEffect(() => {
+    const tk = todayKey();
+    if (pet.last === tk) return;
+    const bonus = (day.waterGlasses >= 8 ? 8 : 0) + (score >= 70 ? 10 : score >= 50 ? 5 : 0);
+    save({ ...pet, last: tk, xp: pet.xp + 22 + bonus });
+  }, [day.id, day.waterGlasses, score]); // eslint-disable-line
+  const stage = [...PET_STAGES].reverse().find((x) => pet.xp >= x.at) || PET_STAGES[0];
+  const next = PET_STAGES.find((x) => x.at > pet.xp);
+  const pct = next ? Math.max(4, Math.round(((pet.xp - stage.at) / (next.at - stage.at)) * 100)) : 100;
+  const feed = () => {
+    const tk = todayKey();
+    if (pet.fed === tk) return;
+    save({ ...pet, fed: tk, xp: pet.xp + 12 });
+  };
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <p className="font-semibold">🐾 Health pet</p>
+        <span className="text-[10px] text-neutral-500">{stage.name} · {pet.xp} XP</span>
+      </div>
+      <div className="flex items-center gap-4 mt-3">
+        <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-lime-400/15 to-emerald-400/5 border border-lime-400/20 flex items-center justify-center">
+          <span className="text-4xl hw-petbounce">{stage.e}</span>
+        </div>
+        <div className="flex-1">
+          <div className="h-2.5 rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full rounded-full hw-barfill bg-gradient-to-r from-lime-400 to-emerald-400" style={{ width: `${pct}%` }} />
+          </div>
+          <p className="text-[10px] text-neutral-500 mt-1.5">{next ? `Agla stage: ${next.name} (${next.at} XP)` : "Max stage — legend! 🏆"}</p>
+          <button onClick={feed} disabled={pet.fed === todayKey()}
+            className="mt-2 px-3 py-1.5 rounded-xl text-xs font-semibold bg-lime-400/15 border border-lime-400/30 text-lime-300 disabled:opacity-40 active:scale-95 transition">
+            {pet.fed === todayKey() ? "Aaj khilaya ✓" : "🍎 Feed (+12 XP)"}
+          </button>
+        </div>
+      </div>
+      <p className="text-[10px] text-neutral-500 mt-2.5">Roz healthy log karne se XP milta hai — paani 8/8 aur acha score = bonus 🎁</p>
+    </Card>
+  );
+}
+
+// ---------- Cycle tracker (Tkku only) ----------
+const CYCLE_TIPS = {
+  menstrual: { name: "Menstrual", emoji: "🌑", tip: "Iron-rich khana (palak, chana, gud), garam paani, halki walk. Rest priority." },
+  follicular: { name: "Follicular", emoji: "🌒", tip: "Energy high — workout ke liye best time. Protein thoda badhao." },
+  ovulation: { name: "Ovulation", emoji: "🌕", tip: "Energy/mood peak window. Hydration aur iron pe dhyan." },
+  luteal: { name: "Luteal (PMS)", emoji: "🌗", tip: "Magnesium (banana, seeds), sugar kam, 7-8h sleep. Cravings normal hai." },
+};
+function cycleInfo(cyc) {
+  if (!cyc || !cyc.lastStart) return null;
+  const len = Math.max(21, Math.min(40, Number(cyc.cycleLen) || 28));
+  const pLen = Math.max(2, Math.min(10, Number(cyc.periodLen) || 5));
+  const start = new Date(`${cyc.lastStart}T00:00:00`);
+  if (isNaN(start.getTime())) return null;
+  const today = new Date(`${todayKey()}T00:00:00`);
+  let diff = Math.floor((today.getTime() - start.getTime()) / 86400000);
+  if (diff < 0) diff = 0;
+  const dayN = (diff % len) + 1;
+  let phase = "follicular";
+  if (dayN <= pLen) phase = "menstrual";
+  else if (dayN >= len - 16 && dayN <= len - 12) phase = "ovulation";
+  else if (dayN > len - 12) phase = "luteal";
+  const daysToNext = len - (diff % len);
+  const nextDate = new Date(today.getTime() + daysToNext * 86400000);
+  const nextLabel = nextDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return { len, pLen, dayN, phase, daysToNext, nextLabel, ...CYCLE_TIPS[phase] };
+}
+function CycleCard({ profile }) {
+  const [cyc, setCyc] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState({ lastStart: "", cycleLen: 28, periodLen: 5 });
+  const [flow, setFlow] = useState("");
+  const [cramps, setCramps] = useState(0);
+  const [mood, setMood] = useState("");
+  const tk = todayKey();
+  useEffect(() => {
+    let alive = true;
+    getCycle(profile).then((c) => {
+      if (!alive) return;
+      setCyc(c || {});
+      if (c) setForm({ lastStart: c.lastStart || "", cycleLen: c.cycleLen || 28, periodLen: c.periodLen || 5 });
+    }).catch(() => alive && setCyc({}));
+    return () => { alive = false; };
+  }, [profile]);
+  useEffect(() => {
+    if (!cyc) return;
+    const l = (cyc.logs || {})[tk] || {};
+    setFlow(l.flow || ""); setCramps(l.cramps || 0); setMood(l.mood || "");
+  }, [cyc, tk]);
+  if (cyc === null) return null;
+  const info = cycleInfo(cyc);
+  const saveCycle = async (patch) => {
+    const next = { ...cyc, ...patch };
+    setCyc(next); setBusy(true);
+    try { await setCycle(profile, next); } catch (e) { alert(`Save fail — ${String(e.message || e).slice(0, 100)}`); }
+    setBusy(false);
+  };
+  const saveLog = (patch) => {
+    const logs = { ...(cyc.logs || {}) };
+    logs[tk] = { ...(logs[tk] || {}), ...patch };
+    const keys = Object.keys(logs).sort().slice(-60);
+    const trimmed = {};
+    for (const k of keys) trimmed[k] = logs[k];
+    setFlow(patch.flow ?? flow); setCramps(patch.cramps ?? cramps); setMood(patch.mood ?? mood);
+    saveCycle({ logs: trimmed });
+  };
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <p className="font-semibold">🌸 Cycle tracker</p>
+        <button onClick={() => saveCycle({ lastStart: tk })} className="text-[10px] px-2.5 py-1 rounded-full bg-pink-400/10 border border-pink-400/30 text-pink-300">Aaj period start ✓</button>
+      </div>
+      {!info ? (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-neutral-400">Last period ki start date dalo — phase, next date aur tips milenge.</p>
+          <div className="flex gap-2">
+            <input type="date" value={form.lastStart} onChange={(e) => setForm({ ...form, lastStart: e.target.value })}
+              className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400/60" />
+            <button onClick={() => form.lastStart && saveCycle({ lastStart: form.lastStart, cycleLen: Number(form.cycleLen) || 28, periodLen: Number(form.periodLen) || 5 })}
+              className="px-4 rounded-xl bg-pink-400/15 border border-pink-400/30 text-pink-200 text-sm">Save</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2.5 mt-2.5">
+            <span className="text-2xl">{info.emoji}</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold">{info.name} <span className="text-neutral-500 font-normal">· Day {info.dayN}/{info.len}</span></p>
+              <p className="text-[11px] text-neutral-400">Next period: <b className="text-pink-300">{info.nextLabel}</b> ({info.daysToNext} din)</p>
+            </div>
+          </div>
+          <p className="text-[11px] text-neutral-400 mt-2 rounded-xl bg-pink-400/5 border border-pink-400/15 px-3 py-2 leading-snug">💡 {info.tip}</p>
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-neutral-500 w-12">Flow</span>
+              {[["", "—"], ["light", "Light"], ["medium", "Medium"], ["heavy", "Heavy"]].map(([v, l]) => (
+                <button key={v} onClick={() => saveLog({ flow: v })} className={`px-2.5 py-1 rounded-lg text-[11px] border ${flow === v ? "bg-pink-400/25 border-pink-400/50 text-pink-200" : "bg-white/5 border-white/10 text-neutral-400"}`}>{l}</button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-neutral-500 w-12">Cramps</span>
+              {[0, 1, 2, 3, 4, 5].map((n) => (
+                <button key={n} onClick={() => saveLog({ cramps: n })} className={`w-7 h-7 rounded-lg text-[11px] border ${cramps === n ? "bg-pink-400/25 border-pink-400/50 text-pink-200" : "bg-white/5 border-white/10 text-neutral-400"}`}>{n}</button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-neutral-500 w-12">Mood</span>
+              {["😊", "🙂", "😐", "😩", "😣", "😤"].map((m) => (
+                <button key={m} onClick={() => saveLog({ mood: mood === m ? "" : m })} className={`w-7 h-7 rounded-lg text-sm border ${mood === m ? "bg-pink-400/25 border-pink-400/50" : "bg-white/5 border-white/10"}`}>{m}</button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between mt-2.5">
+            <button onClick={() => setEdit(!edit)} className="text-[10px] text-neutral-500 underline">settings</button>
+            {busy && <span className="text-[10px] text-neutral-500">saving…</span>}
+          </div>
+          {edit && (
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <Field label="Last start" type="date" value={form.lastStart} onChange={(e) => setForm({ ...form, lastStart: e.target.value })} />
+              <Field label="Cycle days" type="number" min="21" max="40" value={form.cycleLen} onChange={(e) => setForm({ ...form, cycleLen: e.target.value })} />
+              <Field label="Period days" type="number" min="2" max="10" value={form.periodLen} onChange={(e) => setForm({ ...form, periodLen: e.target.value })} />
+              <button onClick={() => saveCycle({ lastStart: form.lastStart || cyc.lastStart, cycleLen: Number(form.cycleLen) || 28, periodLen: Number(form.periodLen) || 5 })}
+                className="col-span-3 py-2 rounded-xl bg-pink-400/15 border border-pink-400/30 text-pink-200 text-xs">Save cycle settings</button>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Weekly report (History) ----------
+function WeekReport({ profile, partner, target }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [a, b] = await Promise.all([listRecent(profile, 14), partner ? listRecent(partner, 14) : Promise.resolve([])]);
+        const map = new Map();
+        for (const d of a || []) { const o = map.get(d.dateKey) || {}; o.a = d; map.set(d.dateKey, o); }
+        for (const d of b || []) { const o = map.get(d.dateKey) || {}; o.b = d; map.set(d.dateKey, o); }
+        const days = [...map.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1)).slice(-7).map(([k, o]) => ({ dateKey: k, ...o }));
+        const avg = (arr) => { const v = arr.filter((x) => x != null); return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : null; };
+        const water = (arr) => { const v = arr.filter(Boolean); return v.length ? Math.round(v.reduce((s, d) => s + (d.waterGlasses || 0), 0) / v.length) : 0; };
+        const hab = (arr) => {
+          const v = arr.filter((d) => d && (d.tasks || []).length);
+          if (!v.length) return null;
+          const done = v.reduce((s, d) => s + d.tasks.filter((t) => t.done).length, 0);
+          const tot = v.reduce((s, d) => s + d.tasks.length, 0);
+          return Math.round((done / tot) * 100);
+        };
+        const sA = days.map((d) => (d.a ? dailyScore(d.a, target).score : null));
+        const sB = days.map((d) => (d.b ? dailyScore(d.b, target).score : null));
+        const wA = avg(sA), wB = avg(sB);
+        const winner = wA == null || wB == null ? null : wA === wB ? "tie" : wA > wB ? profile : partner;
+        if (alive) setData({ wA, wB, winner, waterA: water(days.map((d) => d.a)), waterB: water(days.map((d) => d.b)), habA: hab(days.map((d) => d.a)), habB: hab(days.map((d) => d.b)), n: days.length });
+      } catch { if (alive) setData(null); }
+    })();
+    return () => { alive = false; };
+  }, [profile, partner, target]);
+  if (!data || !partner) return null;
+  return (
+    <Card className="!border-amber-400/25">
+      <div className="flex items-center justify-between">
+        <p className="font-semibold">📋 Weekly report card</p>
+        <span className="text-[10px] text-neutral-500">last {data.n} din · avg</span>
+      </div>
+      {data.wA == null && data.wB == null ? (
+        <p className="text-xs text-neutral-500 mt-2">Is hafte abhi data nahi — log karna shuru karo 🌱</p>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 mt-2.5 rounded-xl bg-amber-400/5 border border-amber-400/20 px-3 py-2">
+            <span className="text-xl">🏆</span>
+            <p className="text-sm">{data.winner === "tie" ? "Is hafte barabar — dono strong 💪" : <><b className="text-amber-300">{data.winner}</b> is hafte ka winner</>}</p>
+          </div>
+          <div className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
+            {[[profile, data.wA, data.waterA, data.habA], [partner, data.wB, data.waterB, data.habB]].map(([name, scv, wt, hb]) => (
+              <div key={name} className="flex items-center justify-between gap-2">
+                <span className="w-16 truncate font-semibold" style={{ color: PROFILE_COLORS[name] || "#a3e635" }}>{name}</span>
+                <span>🎯 {scv ?? "—"}</span>
+                <span>💧 {wt}/8</span>
+                <span>✅ {hb == null ? "—" : `${hb}%`}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => {
+            const txt = `HealthWish — weekly report (avg)\n${profile}: score ${data.wA ?? "-"} | water ${data.waterA}/8 | habits ${data.habA ?? "-"}%\n${partner}: score ${data.wB ?? "-"} | water ${data.waterB}/8 | habits ${data.habB ?? "-"}%\nWinner: ${data.winner === "tie" ? "Tie" : data.winner}`;
+            if (navigator.share) navigator.share({ text: txt }).catch(() => {});
+            else navigator.clipboard.writeText(txt).catch(() => {});
+          }} className="mt-3 w-full py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/10 hover:bg-white/10 transition">📤 Share report</button>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Reminder settings ----------
+function ReminderSettings() {
+  const [cfg, setCfg] = useState(getNotifyCfg());
+  const [perm, setPerm] = useState(notifGranted());
+  const update = (patch) => {
+    const next = { ...cfg, ...patch };
+    setCfg(next); saveNotifyCfg(next);
+  };
+  const ask = async () => {
+    const ok = await askNotif();
+    setPerm(ok);
+    if (ok) update({ on: true });
+  };
+  return (
+    <Card>
+      <div className="flex items-center justify-between">
+        <p className="font-semibold text-sm">🔔 Reminders</p>
+        <Chip on={cfg.on} onClick={() => update({ on: !cfg.on })}>{cfg.on ? "ON" : "OFF"}</Chip>
+      </div>
+      <p className="text-[11px] text-neutral-500 mt-1.5">Paani reminder + medicine/vitamin habits ke set time pe notification. App khula ho (ya background me PWA) tabhi fire hota hai.</p>
+      {!perm && <Btn className="w-full mt-2.5" onClick={ask}>Allow notifications</Btn>}
+      {perm && (
+        <div className="grid grid-cols-3 gap-2 mt-3">
+          <Field label="Start" type="time" value={cfg.start} onChange={(e) => update({ start: e.target.value })} />
+          <Field label="End" type="time" value={cfg.end} onChange={(e) => update({ end: e.target.value })} />
+          <label className="block">
+            <span className="text-xs text-neutral-400 mb-1 block">Every (min)</span>
+            <select value={cfg.every} onChange={(e) => update({ every: Number(e.target.value) })}
+              className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60">
+              {[60, 90, 120, 180].map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      <p className="text-[10px] text-neutral-600 mt-2">💊 Medicine/vitamins habit pe time set karo (e.g. 09:00 PM) — us waqt reminder aayega.</p>
+    </Card>
+  );
+}
+
+// ---------- Shared goals ----------
+function GoalsCard({ profile }) {
+  const [goals, setGoals] = useState(null);
+  const [t, setT] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { getGoals().then((g) => setGoals(g)).catch(() => setGoals([])); }, []);
+  const save = async (list) => {
+    setGoals(list); setBusy(true); setErr("");
+    try { await saveGoals(list); } catch (e) { setErr(String(e.message || e).slice(0, 90)); }
+    setBusy(false);
+  };
+  const add = () => {
+    const title = t.trim();
+    if (!title) return;
+    save([...(goals || []), { id: `g${Date.now().toString(36)}`, title: title.slice(0, 80), done: false, by: profile }]);
+    setT("");
+  };
+  const open = (goals || []).filter((g) => !g.done).length;
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-2">
+        <p className="font-semibold text-sm">🎯 Shared goals</p>
+        <span className="text-[10px] text-neutral-500">{open} pending</span>
+      </div>
+      {goals === null ? <p className="text-xs text-neutral-500">loading…</p> : goals.length === 0 ? (
+        <p className="text-[11px] text-neutral-500">Koi goal nahi — dono ke liye shared target likho (e.g. "7 din 8 glass paani").</p>
+      ) : (
+        <div className="space-y-1.5 mb-2">
+          {goals.map((g) => (
+            <div key={g.id} className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/5 border border-white/10">
+              <button onClick={() => save(goals.map((x) => (x.id === g.id ? { ...x, done: !x.done } : x)))}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center text-xs ${g.done ? "bg-lime-400/25 border-lime-400/50 text-lime-200" : "bg-black/30 border-white/15 text-transparent"}`}>✓</button>
+              <span className={`flex-1 text-xs ${g.done ? "line-through text-neutral-500" : "text-neutral-200"}`}>{g.title}</span>
+              <button onClick={() => save(goals.filter((x) => x.id !== g.id))} className="text-neutral-600 hover:text-red-300 text-xs">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Naya shared goal…"
+          className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-lime-400/60" />
+        <Btn onClick={add} disabled={busy}>Add</Btn>
+      </div>
+      {err && <p className="text-[11px] text-red-300 mt-2">{err}</p>}
+    </Card>
+  );
+}
+
+// ---------- Lab report storage ----------
+function LabsCard({ profile }) {
+  const [labs, setLabs] = useState(null);
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [view, setView] = useState(null);
+  const fileRef = useRef(null);
+  const load = () => listLabs().then((l) => setLabs(l)).catch(() => setLabs([]));
+  useEffect(() => { load(); }, []);
+  const onFile = async (f) => {
+    if (!f) return;
+    setErr(""); setBusy(true);
+    try {
+      const dataUrl = await fileToDataUrl(f, 1100, 0.72);
+      if (dataUrl.length > 750000) throw new Error("image bahut badi hai — chhoti photo try karo");
+      await saveLab({ title: (title.trim() || f.name || "Lab report").slice(0, 80), dataUrl, ts: Date.now(), by: profile });
+      setTitle("");
+      await load();
+    } catch (e) { setErr(String(e.message || e).slice(0, 120)); }
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-2">
+        <p className="font-semibold text-sm">🧪 Lab reports</p>
+        <span className="text-[10px] text-neutral-500">{labs ? labs.length : 0} saved</span>
+      </div>
+      <div className="flex gap-2 mb-2">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Report ka naam (optional)"
+          className="flex-1 bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-lime-400/60" />
+        <Btn onClick={() => fileRef.current && fileRef.current.click()} disabled={busy}>{busy ? "…" : "➕ Photo"}</Btn>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files && e.target.files[0]); e.target.value = ""; }} />
+      </div>
+      {err && <p className="text-[11px] text-red-300 mb-2">{err}</p>}
+      {labs === null ? <p className="text-xs text-neutral-500">loading…</p> : labs.length === 0 ? (
+        <p className="text-[11px] text-neutral-500">Report ki photo lo — dono phones pe sync rahegi.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {labs.map((l) => (
+            <div key={l.id} className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-white/5 border border-white/10">
+              <button onClick={() => setView(l)} className="text-lg">📄</button>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium truncate">{l.title || "Lab report"}</p>
+                <p className="text-[10px] text-neutral-500">{l.ts ? new Date(Number(l.ts)).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""} · {l.by || ""}</p>
+              </div>
+              <button onClick={() => setView(l)} className="text-[10px] px-2 py-1 rounded-lg bg-white/5 border border-white/10">dekho</button>
+              <button onClick={() => { if (confirm("Ye report delete karni hai?")) deleteLab(l.id).then(load); }} className="text-neutral-600 hover:text-red-300 text-xs">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {view && (
+        <div className="fixed inset-0 z-[75] bg-black/85 flex items-center justify-center p-4" onClick={() => setView(null)}>
+          <div className="max-w-lg w-full max-h-full overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between text-neutral-300 text-sm mb-2">
+              <span className="truncate">{view.title}</span>
+              <button onClick={() => setView(null)} className="w-9 h-9 rounded-full bg-white/10 border border-white/15 shrink-0">✕</button>
+            </div>
+            <img src={view.dataUrl} alt={view.title || "lab report"} className="w-full rounded-xl" />
+          </div>
+        </div>
       )}
     </Card>
   );
@@ -589,7 +1156,7 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
   return (
     <div className="space-y-4 hw-fade-in">
-      {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} />}
+      {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} profile={profile} />}
 
       {/* Score top pe */}
       <ScoreCard day={day} dateKey={dateKey} target={target} profile={profile} aiOn={aiOn} partnerName={partner} />
@@ -645,7 +1212,10 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
               className={`text-left px-3.5 py-3 rounded-xl border bg-black/20 border-white/5 hover:border-lime-400/40 hover:bg-white/5 transition`}>
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">{icon} {label}</span>
-                <span className={`text-xs font-bold ${(day[k + "Kcal"] || 0) > 0 ? "text-lime-300" : "text-neutral-600"}`}>{day[k] || day[k + "Kcal"] ? `🔥 ${day[k + "Kcal"] || 0}` : "+"}</span>
+                <span className="flex items-center gap-1">
+                  {day[k + "React"] && <span className="text-sm">{day[k + "React"]}</span>}
+                  <span className={`text-xs font-bold ${(day[k + "Kcal"] || 0) > 0 ? "text-lime-300" : "text-neutral-600"}`}>{day[k] || day[k + "Kcal"] ? `🔥 ${day[k + "Kcal"] || 0}` : "+"}</span>
+                </span>
               </div>
               <p className="text-xs text-neutral-400 mt-1.5 whitespace-pre-wrap break-words leading-snug">{day[k] || "kuch nahi"}</p>
               {(day[k + "Kcal"] > 0 || (day[k + "Protein"] || 0) > 0) && (
@@ -664,6 +1234,9 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
       {/* Water */}
       <WaterCard water={day.waterGlasses} onChange={(v) => set("waterGlasses", Math.max(0, Math.min(20, v)))} />
+
+      {/* Health pet */}
+      <PetCard profile={profile} day={day} target={target} />
 
       {/* Screen time */}
       <Card>
@@ -716,6 +1289,12 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
           rows={2} placeholder="Din ke baare me kuch…"
           className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
       </Card>
+
+      {/* Gratitude */}
+      <GratitudeCard day={day} set={set} />
+
+      {/* Cycle tracker — sirf Tkku */}
+      {profile === "Tkku" && <CycleCard key={profile} profile={profile} />}
 
       {mealEdit && <MealSheet meal={mealEdit} day={day} persist={persist} onClose={() => setMealEdit(null)} aiOn={aiOn} />}
 
@@ -1378,7 +1957,7 @@ function NoFapCard({ dateKey, profile }) {
   );
 }
 
-function PartnerMini({ partner, dateKey, target }) {
+function PartnerMini({ partner, dateKey, target, profile }) {
   const [pd, setPd] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -1389,21 +1968,25 @@ function PartnerMini({ partner, dateKey, target }) {
   const t = dayTotal(pd);
   const done = (pd.tasks || []).filter((x) => x.done).length;
   return (
-    <button onClick={() => { localStorage.setItem("hw_profile", partner); location.reload(); }}
-      className="w-full text-left px-4 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-lime-400/40 transition flex items-center gap-3">
-      <span className="w-9 h-9 rounded-full bg-pink-400/20 border border-pink-400/30 flex items-center justify-center text-base">💞</span>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold">{partner} ka aaj</p>
-        <p className="text-[11px] text-neutral-400 mt-0.5 flex gap-2 flex-wrap">
-          <span>🔥 {t}{target ? `/${target}` : ""} kcal</span>
-          <span>💧 {pd.waterGlasses}</span>
-          <span>✅ {done}/{(pd.tasks || []).length}</span>
-          {pd.wakeupTime && <span>⏰ {fmtTime12(pd.wakeupTime)}</span>}
-          {pd.weightKg > 0 && <span>⚖️ {pd.weightKg}kg</span>}
-        </p>
-      </div>
-      <span className="text-neutral-600 text-xs">dekho ›</span>
-    </button>
+    <div className="flex gap-2 items-stretch">
+      <button onClick={() => { localStorage.setItem("hw_profile", partner); location.reload(); }}
+        className="flex-1 min-w-0 text-left px-4 py-3 rounded-2xl bg-white/5 border border-white/10 hover:border-lime-400/40 transition flex items-center gap-3">
+        <span className="w-9 h-9 rounded-full bg-pink-400/20 border border-pink-400/30 flex items-center justify-center text-base shrink-0">💞</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold">{partner} ka aaj</p>
+          <p className="text-[11px] text-neutral-400 mt-0.5 flex gap-2 flex-wrap">
+            <span>🔥 {t}{target ? `/${target}` : ""} kcal</span>
+            <span>💧 {pd.waterGlasses}</span>
+            <span>✅ {done}/{(pd.tasks || []).length}</span>
+            {pd.wakeupTime && <span>⏰ {fmtTime12(pd.wakeupTime)}</span>}
+            {pd.weightKg > 0 && <span>⚖️ {pd.weightKg}kg</span>}
+          </p>
+          {pd.gratitude && <p className="text-[11px] text-neutral-400 mt-1 truncate">🙏 {pd.gratitude}</p>}
+        </div>
+        <span className="text-neutral-600 text-xs">dekho ›</span>
+      </button>
+      {profile && <NudgeButton profile={profile} partner={partner} />}
+    </div>
   );
 }
 
@@ -1572,6 +2155,13 @@ function MealSheet({ meal, day, persist, onClose, aiOn }) {
           </div>
         )}
         {err && <p className="text-xs text-red-300">{err}</p>}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] text-neutral-500">Partner reaction</span>
+          {["❤️", "😋", "👍", "🔥", "😮"].map((e) => (
+            <button key={e} onClick={() => persist({ ...day, [meal + "React"]: day[meal + "React"] === e ? "" : e })}
+              className={`w-8 h-8 rounded-lg text-base border ${day[meal + "React"] === e ? "bg-lime-400/20 border-lime-400/50" : "bg-white/5 border-white/10"}`}>{e}</button>
+          ))}
+        </div>
         <div className="flex items-end gap-2">
           <Field label={`Calories (kcal)${aiOn ? " — khali chhodo to AI khud count karega" : ""}`} type="number" inputMode="numeric" value={kcal} onChange={(e) => setKcal(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="0" />
           <Btn className="mb-0.5 flex-1" onClick={save} disabled={busy}>{busy ? "🤖 counting…" : "Save"}</Btn>
@@ -1673,6 +2263,7 @@ function HistoryBoard({ onOpen, target, profile, partner, fetchRecent }) {
 
   return (
     <div className="space-y-4 hw-fade-in">
+      <WeekReport profile={profile} partner={partner} target={target} />
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1.5">
           <Chip on={view === "me"} onClick={() => setView("me")}>👤 {profile}</Chip>
@@ -2114,6 +2705,15 @@ function SettingsBoard({ profile, target, setTarget, onSwitchProfile, lockHash, 
         {csvMsg && <p className="text-xs text-lime-300 mt-2">{csvMsg}</p>}
         <p className="text-[11px] text-neutral-500 mt-3">Data Firestore (healthwish-6ca22) me sync hota hai — Android app wahi DB use karti hai, dono me same dikhega.</p>
       </Card>
+
+      {/* Shared goals */}
+      <GoalsCard profile={profile} />
+
+      {/* Reminders */}
+      <ReminderSettings />
+
+      {/* Lab reports */}
+      <LabsCard profile={profile} />
 
       {/* Self-test */}
       <SelfTestCard profile={profile} />
