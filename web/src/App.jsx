@@ -9,7 +9,7 @@ import {
 import {
   PRESETS, DEFAULT_RULES, getAI, saveAI, clearAI, isConfigured, testAI, parseFoodInput, estimateKcal,
   estimateMealNutrition, analyzeFoodPhoto, storeShared, usingShared, istSlot, istNow, getTone, setTone,
-  coupleCompareOn, setCoupleCompare, coachMessage, coachChat,
+  coupleCompareOn, setCoupleCompare, coachMessage, coachChat, coachAgent, coachAgentVision,
 } from "./lib/ai.js";
 import { getSession, emailAuth, logout as authLogout, getValidToken } from "./lib/firebaseAuth.js";
 import { dailyScore, weeklyScore, monthlyScore, sleepHours, screenHours, taskScheduled } from "./lib/score.js";
@@ -141,6 +141,7 @@ export default function App() {
   const [target, setTarget] = useState(() => Number(localStorage.getItem("hw_kcal_target")) || 0);
   const [installEvt, setInstallEvt] = useState(null);
   const saveTimer = useRef(null);
+  const dayRef = useRef(null);
   const docLoadedFor = useRef("");
   const [offlineQ, setOfflineQ] = useState(0);
 
@@ -166,10 +167,12 @@ export default function App() {
         const doc = await getDay(dateKey, profile);
         if (!alive) return;
         docLoadedFor.current = key;
+        dayRef.current = doc;
         setDay(doc); setExists(true);
       } catch (e) {
         if (!alive) return;
         docLoadedFor.current = key;
+        dayRef.current = emptyDay(dateKey, profile);
         setDay(emptyDay(dateKey, profile)); setExists(false);
         if (!/404|not.?found|NOT_FOUND/i.test(String(e.message))) setLoadErr(`Data load fail — ${String(e.message).slice(0, 120)}`);
       }
@@ -215,6 +218,8 @@ export default function App() {
   // debounced autosave
   const persist = useCallback((next) => {
     setDay(next);
+    dayRef.current = next;
+    try { window.dispatchEvent(new CustomEvent("hw:daylog", { detail: { profile, dateKey: next.dateKey } })); } catch {}
     setSyncState("saving");
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -232,7 +237,7 @@ export default function App() {
         setLoadErr(`Sync fail: ${e.message}`);
       }
     }, 500);
-  }, [reloadRecent, tab]);
+  }, [reloadRecent, tab, profile]);
 
   // offline queue: net aate hi pending saves flush
   useEffect(() => {
@@ -274,13 +279,87 @@ export default function App() {
   };
   const doneCount = (day?.tasks || []).filter((t) => t.done).length;
 
+  const applyCoachActions = useCallback((actions) => {
+    const cur = dayRef.current;
+    if (!cur || !Array.isArray(actions) || !actions.length) return [];
+    const next = { ...cur };
+    if (Array.isArray(cur.tasks)) next.tasks = cur.tasks.map((t) => ({ ...t }));
+    const logs = [];
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, Number(v) || 0));
+    const int = (v, a, b) => Math.round(clamp(v, a, b));
+    for (const a of actions.slice(0, 8)) {
+      if (!a || typeof a !== "object") continue;
+      try {
+        if (a.type === "meal" && MEALS.some(([k]) => k === a.meal)) {
+          const items = (Array.isArray(a.items) ? a.items : []).slice(0, 15).map((it) => ({
+            name: String(it.name || "").slice(0, 60),
+            qty: String(it.qty || "").slice(0, 40),
+            kcal: int(it.kcal, 0, 5000), protein: int(it.protein, 0, 500),
+            carbs: int(it.carbs, 0, 800), fat: int(it.fat, 0, 500),
+            fiber: int(it.fiber, 0, 200), sugar: int(it.sugar, 0, 500),
+          })).filter((it) => it.name);
+          if (!items.length) continue;
+          const sum = items.reduce((t, it) => ({
+            kcal: t.kcal + it.kcal, protein: t.protein + it.protein, carbs: t.carbs + it.carbs,
+            fat: t.fat + it.fat, fiber: t.fiber + it.fiber, sugar: t.sugar + it.sugar,
+          }), { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 });
+          const summary = items.map((it) => [it.qty, it.name].filter(Boolean).join(" ")).join(" + ").slice(0, 300);
+          const key = a.meal;
+          next[key] = next[key] ? `${next[key]} + ${summary}`.slice(0, 600) : summary;
+          next[key + "Kcal"] = (Number(next[key + "Kcal"]) || 0) + sum.kcal;
+          for (const [F, K] of MACRO_FIELDS) next[key + F] = (Number(next[key + F]) || 0) + sum[K];
+          const label = (MEALS.find(([k]) => k === key) || [0, "Meal"])[1];
+          logs.push(`✅ ${label} +${sum.kcal} kcal · P${sum.protein} C${sum.carbs} F${sum.fat}`);
+        } else if (a.type === "water") {
+          const setV = Number(a.set);
+          const nv = Number.isFinite(setV) && setV >= 0 ? setV : (Number(next.waterGlasses) || 0) + (Number(a.delta) || 0);
+          next.waterGlasses = int(nv, 0, 30);
+          logs.push(`💧 Paani ${next.waterGlasses} glass`);
+        } else if (a.type === "weight") {
+          const kg = Math.round((Number(a.kg) || 0) * 10) / 10;
+          if (kg >= 20 && kg <= 250) { next.weightKg = kg; logs.push(`⚖️ Weight ${kg} kg`); }
+        } else if (a.type === "sleep") {
+          const parts = [];
+          for (const [src, dst, label] of [["wakeup", "wakeupTime", "Wakeup"], ["sleepTime", "sleepTime", "Sleep"]]) {
+            if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(a[src] || ""))) { next[dst] = a[src]; parts.push(`${label} ${a[src]}`); }
+          }
+          if (parts.length) logs.push(`😴 ${parts.join(" · ")}`);
+        } else if (a.type === "screen") {
+          const h = clamp(a.hours, 0, 24);
+          if (h > 0) {
+            const hh = Math.floor(h); const mm = Math.round((h - hh) * 60);
+            next.screenOnTime = `${hh}h${mm ? ` ${mm}m` : ""}`;
+            logs.push(`📱 Screen ${next.screenOnTime}`);
+          }
+        } else if (a.type === "habit" && Array.isArray(next.tasks)) {
+          const q = String(a.title || "").toLowerCase().trim();
+          if (!q) continue;
+          const idx = next.tasks.findIndex((t) => {
+            const tt = String(t.title || "").toLowerCase();
+            return tt && (tt.includes(q) || q.includes(tt));
+          });
+          if (idx >= 0) {
+            const done = a.done !== false;
+            next.tasks[idx] = { ...next.tasks[idx], done };
+            logs.push(`${done ? "✅" : "↩️"} ${next.tasks[idx].title} ${done ? "done" : "undone"}`);
+          }
+        } else if (a.type === "mood") {
+          if (DAY_MOODS.includes(a.mood)) { next.dayMood = a.mood; logs.push(`🙂 Mood ${a.mood}`); }
+        }
+      } catch {}
+    }
+    if (logs.length) persist(next);
+    return logs;
+  }, [persist]);
+
   const nav = (
     <nav className="fixed bottom-3 inset-x-0 z-40 px-4">
       <div className="max-w-lg mx-auto">
-        <div className="hw-dock grid grid-cols-3 p-1.5 gap-1">
+        <div className="hw-dock grid grid-cols-4 p-1.5 gap-1">
           {[
             ["today", "Today", "☀️",],
             ["history", "History", "📅"],
+            ["coach", "Coach", "✦"],
             ["settings", "Settings", "⚙️"],
           ].map(([k, label, icon]) => (
             <button key={k} onClick={() => { setTab(k); if (k === "today") setDateKey(todayKey()); }}
@@ -328,6 +407,9 @@ export default function App() {
         ) : tab === "history" ? (
           <HistoryBoard onOpen={(dk) => { setDateKey(dk); setTab("today"); }} target={target} profile={profile} partner={partner}
             fetchRecent={fetchRecentAll} />
+        ) : tab === "coach" ? (
+          <CoachBoard profile={profile} day={day} dateKey={dateKey} target={target} partner={partner}
+            aiOn={isConfigured()} applyActions={applyCoachActions} />
         ) : (
           <SettingsBoard profile={profile} target={target} setTarget={(t) => { setTarget(t); localStorage.setItem("hw_kcal_target", String(t)); }}
             onSwitchProfile={() => { localStorage.removeItem("hw_profile"); setProfile(""); }}
@@ -1886,6 +1968,299 @@ function buildCoachContext({ day, dateKey, profile, target, docs, hours, min, pa
     } : null,
   };
   return ctx;
+}
+
+// ---------- AI Coach tab (agent) ----------
+function ThinkingOrb({ small, label }) {
+  return (
+    <div className={`hw-think ${small ? "hw-think-sm" : ""}`}>
+      <div className="hw-think-orb">
+        <span className="hw-think-core">✦</span>
+        <i className="hw-particle p1" /><i className="hw-particle p2" /><i className="hw-particle p3" />
+      </div>
+      <div className="min-w-0">
+        <p className="hw-think-label">{label || "Wish soch raha hai…"}</p>
+        <span className="hw-dots"><i /><i /><i /></span>
+      </div>
+    </div>
+  );
+}
+
+function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions }) {
+  const chatKey = `hw_coach_chat_${profile}`;
+  const briefKey = `hw_coach_brief_${profile}_${dateKey}`;
+  const readCache = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
+  const [msgs, setMsgs] = useState(() => {
+    const a = readCache(`hw_coach_chat_${profile}`);
+    return Array.isArray(a) ? a.slice(-40) : [];
+  });
+  const [input, setInput] = useState("");
+  const [img, setImg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [brief, setBrief] = useState(() => readCache(`hw_coach_brief_${profile}_${dateKey}`));
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefErr, setBriefErr] = useState("");
+  const [thinkingLabel, setThinkingLabel] = useState("Wish soch raha hai…");
+  const docsRef = useRef(null);
+  const docsAt = useRef(0);
+  const msgsRef = useRef(msgs);
+  const imgRef = useRef(null);
+  const endRef = useRef(null);
+  const fileRef = useRef(null);
+  const briefTimer = useRef(null);
+  const briefInFlight = useRef(false);
+  const mounted = useRef(true);
+  const aiErr = (e) => {
+    const m = String((e && e.message) || e || "");
+    if (/40[13]|401|403|500|502|503|quota|api.?key|permission|model|not found/i.test(m)) {
+      return `AI provider error (${m.slice(0, 48)}) — Settings me key/model check karo.`;
+    }
+    return m.slice(0, 150) || "Kuch gadbad ho gayi — dobara try karo";
+  };
+
+  const fp = useMemo(() => {
+    try {
+      const str = JSON.stringify({
+        k: dayTotal(day), w: day.waterGlasses, t: (day.tasks || []).map((t) => (t.done ? 1 : 0)).join(""),
+        wt: day.weightKg, sl: day.sleepTime, wk: day.wakeupTime, sc: day.screenOnTime,
+        m: [day.breakfast, day.lunch, day.dinner, day.snacks].join("|"), p: dayMacros(day), dm: day.dayMood,
+        tg: target, h: healthLocal(profile),
+      });
+      let h = 0;
+      for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+      return String(h);
+    } catch { return "0"; }
+  }, [day, target, profile]);
+
+  useEffect(() => {
+    msgsRef.current = msgs;
+    try { localStorage.setItem(chatKey, JSON.stringify(msgs.slice(-40))); } catch {}
+  }, [msgs, chatKey]);
+  useEffect(() => { imgRef.current = img; }, [img]);
+  useEffect(() => {
+    if (!msgs.length && !busy) return;
+    const id = setTimeout(() => {
+      try { window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" }); } catch { window.scrollTo(0, document.documentElement.scrollHeight); }
+    }, 80);
+    return () => clearTimeout(id);
+  }, [msgs.length, busy]);
+  useEffect(() => () => clearTimeout(briefTimer.current), []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  const loadDocs = useCallback(async (force) => {
+    if (!force && docsRef.current && Date.now() - docsAt.current < 45000) return docsRef.current;
+    try {
+      const d = (await listRecent(profile, 14)).map((x) => ({ ...x, tasks: cleanTasks(x.tasks) }));
+      docsRef.current = d; docsAt.current = Date.now();
+      return d;
+    } catch { return docsRef.current || []; }
+  }, [profile]);
+
+  const makeCtx = useCallback((docs) => {
+    const t = istNow();
+    const c = buildCoachContext({ day, dateKey, profile, target, docs: docs || [], hours: t.hour, min: t.min, partnerDoc: null, partnerName: partner, couple: false });
+    c.healthProfile = healthLocal(profile);
+    return c;
+  }, [day, dateKey, profile, target, partner]);
+
+  const refreshBrief = useCallback(async (force) => {
+    if (!aiOn) return;
+    const cached = readCache(briefKey);
+    if (!force && cached && cached.fp === fp) { setBrief(cached); return; }
+    if (briefInFlight.current) return;
+    briefInFlight.current = true;
+    setBriefBusy(true);
+    setBriefErr("");
+    try {
+      const docs = await loadDocs(force);
+      const t = istNow();
+      const msg = await coachMessage(makeCtx(docs), getTone(), istSlot(t.hour));
+      if (!mounted.current) return;
+      if (msg && !msg.startsWith("Coach offline")) {
+        const b = { fp, msg, at: Date.now() };
+        setBrief(b);
+        try { localStorage.setItem(briefKey, JSON.stringify(b)); } catch {}
+      } else {
+        setBriefErr(aiErr(msg));
+      }
+    } catch (e) { if (mounted.current) setBriefErr(aiErr(e)); }
+    briefInFlight.current = false;
+    if (mounted.current) setBriefBusy(false);
+  }, [aiOn, briefKey, fp, loadDocs, makeCtx]);
+
+  const refreshRef = useRef(refreshBrief);
+  useEffect(() => { refreshRef.current = refreshBrief; }, [refreshBrief]);
+
+  // loaded/stale brief — pehli baar ya date badalne par
+  useEffect(() => {
+    const cached = readCache(briefKey);
+    if (cached && cached.fp === fp) { setBrief(cached); return; }
+    setBrief(null);
+    const id = setTimeout(() => { refreshRef.current && refreshRef.current(false); }, 400);
+    return () => clearTimeout(id);
+  }, [briefKey]); // eslint-disable-line
+
+  // koi bhi log add hua → auto refresh (beast animation ke saath)
+  useEffect(() => {
+    const h = (e) => {
+      const d = e.detail || {};
+      if (d.profile !== profile || d.dateKey !== dateKey) return;
+      clearTimeout(briefTimer.current);
+      briefTimer.current = setTimeout(() => { refreshRef.current && refreshRef.current(false); }, 1400);
+    };
+    window.addEventListener("hw:daylog", h);
+    return () => window.removeEventListener("hw:daylog", h);
+  }, [profile, dateKey]);
+
+  const append = (m) => setMsgs((arr) => [...arr, m].slice(-40));
+
+  const send = async (quick) => {
+    const text = String(quick != null ? quick : input).trim();
+    if (busy) return;
+    if (!text && !img) return;
+    if (!aiOn) { setErr("Pehle Settings → AI Coach me key daalo, phir Wish ka full agent mode chalega 🙂"); return; }
+    setErr("");
+    const hasImg = !!img;
+    const um = { role: "user", content: text || "Ye photo dekho", at: Date.now(), photo: hasImg };
+    append(um);
+    setInput("");
+    setBusy(true);
+    setThinkingLabel(hasImg ? "Photo samajh raha hai…" : "Wish soch raha hai…");
+    try {
+      const docs = await loadDocs(true);
+      const ctx = makeCtx(docs);
+      const history = [...msgsRef.current, um].filter((m) => m.content).slice(-10).map(({ role, content }) => ({ role, content }));
+      const res = hasImg
+        ? await coachAgentVision(img, text, ctx, history.slice(0, -1))
+        : await coachAgent(history, ctx);
+      let logs = [];
+      if (res.actions && res.actions.length && applyActions) logs = applyActions(res.actions);
+      setImg(null);
+      append({ role: "assistant", content: res.reply || "…", at: Date.now(), actions: logs });
+      docsRef.current = null;
+    } catch (e) {
+      setErr(aiErr(e));
+    }
+    setBusy(false);
+  };
+
+  const onFile = async (f) => {
+    if (!f) return;
+    try { const d = await fileToDataUrl(f, 900, 0.82); setImg(d); setErr(""); }
+    catch { setErr("Photo load nahi hui — dobara try karo"); }
+  };
+
+  const quicks = ["Aaj ka plan do", "Protein gap batao", "Dinner ke liye kya khau?", "Mera progress batao", "Paani +2 log karo"];
+
+  return (
+    <div className="space-y-4 hw-fade-in pb-[210px]">
+      <div className="hw-coach-hero">
+        <div className="flex items-center gap-3">
+          <div className="hw-coach-avatar">✦<span className="hw-coach-live" /></div>
+          <div className="flex-1 min-w-0">
+            <p className="hw-eyebrow !text-lime-200/80">AI Agent · {profile}</p>
+            <h2 className="text-[19px] font-bold leading-tight">Wish — Personal Coach</h2>
+            <p className="text-[11px] text-neutral-400 leading-snug">History + aaj ka data dekh ke guide karta hai · bol ke data log karo</p>
+          </div>
+          <button onClick={() => setMsgs([])} title="Chat clear" className="hw-navbtn">🧹</button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className={`hw-statuschip ${aiOn ? "on" : "off"}`}>{aiOn ? "● Online" : "● Setup needed"}</span>
+          <span className="hw-statuschip">History-aware</span>
+          <span className="hw-statuschip">Photo AI</span>
+          <span className="hw-statuschip">Auto-log</span>
+        </div>
+      </div>
+
+      <Card>
+        <div className="flex items-center justify-between gap-2">
+          <p className="hw-eyebrow">Coach ka take · aaj</p>
+          <div className="flex items-center gap-2">
+            {brief && brief.at ? <span className="text-[9px] text-neutral-500">{new Date(brief.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span> : null}
+            <button onClick={() => refreshBrief(true)} disabled={briefBusy || !aiOn}
+              className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-neutral-300 hover:text-lime-300 disabled:opacity-30">
+              <RefreshIcon className={`w-3.5 h-3.5 ${briefBusy ? "hw-spin" : ""}`} />
+            </button>
+          </div>
+        </div>
+        {briefBusy ? (
+          <div className="mt-2">
+            <ThinkingOrb label="History + aaj ka data padh raha hai…" />
+            <div className="hw-shimmer mt-3" />
+            <div className="hw-shimmer mt-1.5 w-3/4" />
+          </div>
+        ) : brief && brief.msg ? (
+          <>
+            <p key={brief.at} className="hw-brief-text mt-2">{brief.msg}</p>
+            {briefErr && <p className="mt-2 text-[10.5px] text-amber-300/90">{briefErr}</p>}
+          </>
+        ) : (
+          <p className={`text-[12.5px] mt-2 leading-relaxed ${briefErr ? "text-amber-300/90" : "text-neutral-400"}`}>
+            {briefErr || (aiOn ? "Coach ready hai — pehla take aa raha hai…" : "Settings → AI Coach me key daalo, phir Wish tumhe daily guide karega.")}
+          </p>
+        )}
+      </Card>
+
+      <div className="space-y-2.5">
+        {msgs.length === 0 && (
+          <div className="hw-chat-empty">
+            <p className="text-[12.5px] font-semibold"><span className="text-lime-300 mr-1">✦</span> Wish se bol ke data log karo</p>
+            <p className="text-[10.5px] text-neutral-400 mt-1 leading-relaxed">
+              "Dinner me 2 roti + dal" → meal + macros khud add. Photo bhejo ya kuch bhi poochho — history dekh ke guide karega.
+            </p>
+          </div>
+        )}
+        {msgs.map((m, i) => (
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`hw-msg ${m.role === "user" ? "hw-msg-user" : "hw-msg-ai"}`}>
+              {m.photo && <span className="text-[10px] opacity-70 block mb-1">📷 photo bheji</span>}
+              <p className="whitespace-pre-wrap">{m.content}</p>
+              {Array.isArray(m.actions) && m.actions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {m.actions.map((a, j) => <span key={j} className="hw-actionchip">{a}</span>)}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="hw-msg hw-msg-ai !py-2.5"><ThinkingOrb small label={thinkingLabel} /></div>
+          </div>
+        )}
+        {err && <p className="text-[11px] text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">{err}</p>}
+        <div ref={endRef} style={{ scrollMarginBottom: 180 }} />
+      </div>
+
+      <div className="hw-coach-composer">
+        {img && (
+          <div className="hw-photo-preview">
+            <img src={img} alt="attachment" />
+            <button onClick={() => setImg(null)} aria-label="Remove photo">✕</button>
+            <span>Photo ready — Send dabao, Wish photo se log karega</span>
+          </div>
+        )}
+
+        <div className="hw-quickrow">
+          {quicks.map((q) => <button key={q} onClick={() => send(q)} disabled={busy || !aiOn} className="hw-quickchip">{q}</button>)}
+        </div>
+
+        <div className="hw-coach-input">
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { onFile(e.target.files && e.target.files[0]); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current && fileRef.current.click()} className="hw-attach" title="Photo bhejo">📷</button>
+        <textarea rows={1} value={input} onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder={aiOn ? "Wish se poochho ya log karwao…" : "Pehle AI setup karo (Settings)"}
+          disabled={!aiOn} className="hw-coach-textarea" />
+        <button onClick={() => send()} disabled={busy || !aiOn || (!input.trim() && !img)} className="hw-send">➤</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ScoreRing({ score }) {

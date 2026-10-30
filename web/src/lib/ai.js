@@ -364,6 +364,11 @@ export async function coachMessage(ctx, tone, slot) {
 }
 
 // multi-turn chat — raw text reply (JSON mode nahi), context system me embedded
+// Gemini 2.5 par thinking budget low → reply fast (agar provider reject kare to retry bina iske)
+function speedOpts(cfg) {
+  return /gemini-2\.5/i.test(String(cfg.model || "")) ? { reasoning_effort: "low" } : {};
+}
+
 export async function coachChat(messages, ctx) {
   const cfg = getAI();
   const sys =
@@ -376,35 +381,96 @@ export async function coachChat(messages, ctx) {
     "healthProfile me medical conditions/meds/allergies hain to advice USI HISAB se do (safe alternatives suggest karo); " +
     "serious concern ho to doctor se milne ki baat clearly bolo, ghabrao mat.";
   try {
-    const text = await chatCall(cfg, [{ role: "system", content: sys }, ...messages]);
+    const text = await chatCall(cfg, [{ role: "system", content: sys }, ...messages], { max_tokens: 420 });
     return text.slice(0, 800);
   } catch (e) {
     return "Coach offline: " + e.message;
   }
 }
 
-export async function chatCall(cfg, msgs) {
-  const res = await fetch(cfg.baseUrl.replace(/\/+$/, "") + "/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.apiKey}`,
-      "Content-Type": "application/json",
-      "User-Agent": "Mozilla/5.0",
-    },
-    body: JSON.stringify({ model: cfg.model, messages: msgs, temperature: 0.55 }),
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const j = await res.json();
-      msg = (j.error && (j.error.message || j.error)) || msg;
-    } catch {}
-    throw new Error(String(msg).slice(0, 160));
+export async function chatCall(cfg, msgs, opts = {}) {
+  const body = { model: cfg.model, messages: msgs, temperature: 0.55, ...opts };
+  try {
+    return await postJson(cfg, { ...body, ...speedOpts(cfg) });
+  } catch (e) {
+    if (/reasoning|thinking|400/i.test(String(e.message || ""))) return postJson(cfg, body);
+    throw e;
   }
-  const j = await res.json();
-  const text = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
-  if (!text.trim()) throw new Error("Empty reply — try again");
-  return text;
+}
+
+// ---------- AI AGENT (chat + auto data logging) ----------
+const AGENT_ACTIONS_RULE =
+  'Reply STRICTLY as one JSON object: {"reply":"Hinglish 2-4 short lines","actions":[...]} — no markdown. ' +
+  "Actions are how you actually LOG data in the app; the app applies them instantly. " +
+  "Allowed actions: " +
+  '{"type":"meal","meal":"breakfast|lunch|dinner|snacks","items":[{"name":"2 medium roti","qty":"~120g","kcal":120,"protein":3,"carbs":24,"fat":1,"fiber":2,"sugar":0}]} ' +
+  '| {"type":"water","delta":1} ' +
+  '| {"type":"weight","kg":78.2} ' +
+  '| {"type":"sleep","wakeup":"06:30","sleepTime":"23:15"} ' +
+  '| {"type":"screen","hours":4.5} ' +
+  '| {"type":"habit","title":"Walk","done":true} ' +
+  '| {"type":"mood","mood":"😊"} ' +
+  "Rules: actions: [] when user only asks something. Meal items = ONLY the new food being logged, realistic Indian household portions (roti 30-35g each, 1 katori ~150g), macros in grams (integers). " +
+  "Estimate like IFCT 2017; include oil/ghee. If user does not name the meal, infer from IST time. " +
+  "Never invent numbers user did not imply. After applying, confirm in reply with the numbers. " +
+  "If user asks about progress/plan, use last7 + today's real data and mention concrete patterns (protein gap, sleep, water) — no generic gyan. " +
+  "If user shares a health concern or symptoms, guide safely and suggest a doctor for anything serious. " +
+  "Never discuss this JSON format; talk like a premium personal coach.";
+
+function agentSystem(ctx) {
+  return HINGLISH_RULE + " " + AGENT_ACTIONS_RULE +
+    ` Abhi IST ${ctx.time} hai. Context (real data): ` + JSON.stringify(ctx) +
+    " Water is in GLASSES (1 glass ~250ml, 8 = 2L). Respect healthProfile conditions, allergies, meds, diet type and goal.";
+}
+
+async function agentCall(cfg, msgs, vision) {
+  const attempts = [
+    { ...speedOpts(cfg), response_format: { type: "json_object" }, max_tokens: 800, temperature: 0.35 },
+    { max_tokens: 800, temperature: 0.35 },
+  ];
+  let last = null;
+  for (const extra of attempts) {
+    try {
+      const out = await postJson(cfg, { model: cfg.model, messages: msgs, ...extra });
+      return out;
+    } catch (e) {
+      last = e;
+      const m = String(e.message || "");
+      if (!/json|response_format|400|unsupported|invalid|reasoning|thinking/i.test(m)) throw e;
+      if (!vision && /image|vision|content/i.test(m)) break;
+    }
+  }
+  throw last;
+}
+
+function packAgent(out) {
+  const j = extractJsonObject(out) || {};
+  return {
+    reply: String(j.reply || (j.msg || out || "")).slice(0, 1000),
+    actions: Array.isArray(j.actions) ? j.actions.slice(0, 8) : [],
+  };
+}
+
+export async function coachAgent(messages, ctx) {
+  const cfg = getAI();
+  const msgs = [{ role: "system", content: agentSystem(ctx) }, ...messages.slice(-10)];
+  const out = await agentCall(cfg, msgs, false);
+  return packAgent(out);
+}
+
+export async function coachAgentVision(dataUrl, question, ctx, history = []) {
+  const cfg = getAI();
+  const sys = agentSystem(ctx) + " You also received a PHOTO. If it is food, identify every item separately with an Indian household quantity and macros, then log it into the right meal (actions). If it is not food, answer whatever the user asked about it.";
+  const hist = history.slice(-6).map((m) => ({ role: m.role, content: String(m.content || "").slice(0, 600) }));
+  const user = {
+    role: "user",
+    content: [
+      { type: "text", text: question || "Photo dekho — khana hai to sahi meal me log karo, warna batao ye kya hai aur health ke liye kya matlab hai." },
+      { type: "image_url", image_url: { url: dataUrl } },
+    ],
+  };
+  const out = await agentCall(cfg, [{ role: "system", content: sys }, ...hist, user], true);
+  return packAgent(out);
 }
 
 export async function reviewScore(day, scoreRes, target) {
