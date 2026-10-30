@@ -484,30 +484,74 @@ function Header({ profile, switchProfile, dateKey, onPrev, onNext, syncState, on
     try { dateRef.current.showPicker && dateRef.current.showPicker(); }
     catch { dateRef.current.click && dateRef.current.click(); }
   };
+  const isToday = dateKey === todayKey();
+  const syncLabel = syncState === "saving" ? "Saving" : syncState === "saved" ? "Saved" : syncState === "offline" ? "Offline" : "Synced";
   return (
-    <div className="flex items-center justify-between gap-2 mb-5">
-      <button onClick={switchProfile} title="Profile switch"
-        className="flex items-center gap-2.5 bg-white/[0.05] border border-white/10 pl-1.5 pr-3.5 py-1.5 rounded-full hover:bg-white/10 active:scale-95 transition">
-        <span className="w-8 h-8 rounded-full bg-gradient-to-br from-lime-300 via-emerald-400 to-teal-400 p-[2px]">
-          <span className="w-full h-full rounded-full bg-[#0c0c13] flex items-center justify-center text-lime-300 font-bold text-sm">
-            {profile.slice(0, 1).toUpperCase()}
-          </span>
-        </span>
-        <span className="font-semibold text-sm">{profile}</span>
-        <span className="text-neutral-500 text-xs">⇅</span>
-      </button>
-      <div className="flex items-center gap-1.5">
-        <button onClick={onPrev} className="w-9 h-9 rounded-full bg-white/[0.04] border border-white/10 hover:bg-white/10 active:scale-90 transition text-neutral-300">←</button>
-        <button onClick={openPicker} title="Date picker"
-          className="relative px-4 py-2 text-sm font-bold min-w-28 rounded-2xl bg-white/[0.04] border border-white/10 hover:bg-white/10 active:scale-95 transition">
-          {prettyDate(dateKey)}
+    <div className="mb-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="hw-logo">✦</div>
+          <div className="min-w-0">
+            <p className="hw-eyebrow">HealthWish</p>
+            <p className="text-[15px] font-bold leading-tight truncate">AI health companion</p>
+          </div>
+        </div>
+        <button onClick={switchProfile} title="Profile switch" className="hw-profile-chip shrink-0">
+          <span className="hw-avatar"><span>{profile.slice(0, 1).toUpperCase()}</span></span>
+          <span className="font-semibold text-[13px]">{profile}</span>
+          <span className="text-neutral-500 text-[11px]">⇅</span>
+        </button>
+      </div>
+      <div className="hw-datebar mt-3">
+        <button onClick={onPrev} aria-label="Previous day" className="hw-navbtn">←</button>
+        <button onClick={openPicker} title="Date picker" className="hw-datepill">
+          <span className="text-[13px] font-bold leading-tight">{prettyDate(dateKey)}</span>
+          <span className="hw-eyebrow mt-0.5">Date · tap to change</span>
           <input ref={dateRef} type="date" value={dateKey} max={todayKey()} tabIndex={-1}
             onChange={(e) => e.target.value && onPickDate && onPickDate(e.target.value)}
             className="absolute opacity-0 pointer-events-none w-0 h-0" aria-hidden="true" />
         </button>
-        <button onClick={onNext} disabled={dateKey === todayKey()}
-          className="w-9 h-9 rounded-full bg-white/[0.04] border border-white/10 disabled:opacity-25 hover:bg-white/10 active:scale-90 transition text-neutral-300">→</button>
-        <span title="Sync status" className={`w-2.5 h-2.5 rounded-full ml-0.5 ${syncState === "saving" ? "bg-amber-300 animate-pulse" : syncState === "saved" ? "bg-lime-400" : "bg-white/15"}`} />
+        {!isToday && (
+          <button onClick={onHome} className="hw-navbtn !w-auto px-2.5 text-[10px] font-bold text-lime-300">Today</button>
+        )}
+        <button onClick={onNext} disabled={isToday} aria-label="Next day" className="hw-navbtn">→</button>
+        <span className={`hw-sync ${syncState}`}><i />{syncLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Smart brief (local AI-style insight) ----------
+function SmartBrief({ day, target, profile }) {
+  const score = dailyScore(day, target).score;
+  const water = Number(day.waterGlasses) || 0;
+  const kcal = dayTotal(day);
+  const pct = target ? Math.round((kcal / target) * 100) : 0;
+  const tasks = (day.tasks || []).filter((t) => t && t.title);
+  const done = tasks.filter((t) => t.done).length;
+  const tips = [];
+  if (tasks.length) tips.push(done === tasks.length ? "Saare habits done — perfect day 🎯" : `${done}/${tasks.length} habits — baaki aaj hi ✅`);
+  if (water >= 8) tips.push("Paani target complete, hydration on point 💧");
+  else if (water <= 2) tips.push(`Paani ${water}/8 — agla glass abhi 💧`);
+  else tips.push(`Paani ${water}/8 — thoda aur add karo 💧`);
+  if (target) tips.push(pct > 110 ? `Calories ${pct}% — dinner light rakho 🔥` : pct < 40 ? "Calories kam hai — balanced meal lo 🔥" : `Calories ${pct}% — track pe ho 🔥`);
+  const hour = new Date().getHours();
+  if (hour >= 21) tips.push("Raat ho gayi — screen off, 7-8 ghante neend 😴");
+  const headline = score >= 80 ? "Shaandar din!" : score >= 60 ? "Acha din — thoda aur push" : score >= 35 ? "Average din — chhoti jeet se shuru" : "Naya din, nayi shuruaat";
+  return (
+    <div className="hw-brief hw-fade-in">
+      <div className="flex items-start gap-3 relative z-10">
+        <div className="hw-brief-icon">✨</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <p className="hw-eyebrow !text-lime-300/80">Smart brief · {profile}</p>
+            <span className="hw-brief-score">SCORE {score}</span>
+          </div>
+          <p className="text-[15px] font-bold mt-0.5 leading-snug">{headline}</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {tips.slice(0, 3).map((t, i) => <span key={i} className="hw-brief-chip">{t}</span>)}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -721,18 +765,6 @@ function NudgePoller({ profile }) {
         <button onClick={() => setMsg(null)} className="text-neutral-500 shrink-0">✕</button>
       </div>
     </div>
-  );
-}
-
-// ---------- Gratitude ----------
-function GratitudeCard({ day, set }) {
-  return (
-    <Card>
-      <p className="font-semibold mb-2">🙏 Aaj ki gratitude</p>
-      <input value={day.gratitude || ""} onChange={(e) => set("gratitude", e.target.value.slice(0, 140))}
-        placeholder="Aaj kis cheez ke liye shukriya? (ek line)"
-        className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60" />
-    </Card>
   );
 }
 
@@ -1192,6 +1224,7 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
 
   return (
     <div className="space-y-4 hw-fade-in">
+      <SmartBrief day={day} target={target} profile={profile} />
       {partner && <PartnerMini partner={partner} dateKey={todayKey()} target={target} profile={profile} />}
 
       {/* Score top pe */}
@@ -1317,17 +1350,6 @@ function TodayBoard({ day, dateKey, set, taskToggle, doneCount, target, aiOn, pe
           <span className="text-[10px] text-neutral-500">±0.1 kg step · 15 din me ek baar bhi chalega 🙂</span>
         </div>
       </Card>
-
-      {/* Note */}
-      <Card>
-        <p className="font-semibold mb-2">📝 Note</p>
-        <textarea value={day.dayNote} onChange={(e) => set("dayNote", e.target.value.slice(0, 300))}
-          rows={2} placeholder="Din ke baare me kuch…"
-          className="w-full bg-black/30 border border-white/10 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-lime-400/60 resize-none" />
-      </Card>
-
-      {/* Gratitude */}
-      <GratitudeCard day={day} set={set} />
 
       {/* Cycle tracker — sirf Tkku */}
       {profile === "Tkku" && <CycleCard key={profile} profile={profile} />}
@@ -1690,11 +1712,11 @@ function ScoreCard({ day, dateKey, target, profile, aiOn, partnerName }) {
   }, [coachKey, aiOn]); // eslint-disable-line
 
   return (
-    <Card>
+    <Card className="hw-hero">
       <div className="flex items-center justify-between mb-3">
-        <p className="font-semibold">📊 Health Score</p>
-        <div className="flex gap-1.5">
-          {["daily", "weekly", "monthly"].map((r) => <Chip key={r} on={range === r} onClick={() => setRange(r)}>{r === "daily" ? "Aaj" : r === "weekly" ? "7 din" : "Mahine"}</Chip>)}
+        <p className="font-semibold whitespace-nowrap text-[15px]">📊 Health Score</p>
+        <div className="flex gap-1">
+          {["daily", "weekly", "monthly"].map((r) => <Chip key={r} on={range === r} onClick={() => setRange(r)} className="!px-2.5 !py-1 !text-[11px] whitespace-nowrap">{r === "daily" ? "Aaj" : r === "weekly" ? "7 din" : "Mahine"}</Chip>)}
         </div>
       </div>
       <div className="flex items-center gap-4">
@@ -2018,7 +2040,6 @@ function PartnerMini({ partner, dateKey, target, profile }) {
             {pd.wakeupTime && <span>⏰ {fmtTime12(pd.wakeupTime)}</span>}
             {pd.weightKg > 0 && <span>⚖️ {pd.weightKg}kg</span>}
           </p>
-          {pd.gratitude && <p className="text-[11px] text-neutral-400 mt-1 truncate">🙏 {pd.gratitude}</p>}
         </div>
         <span className="text-neutral-600 text-xs">dekho ›</span>
       </button>
