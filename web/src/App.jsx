@@ -1979,7 +1979,7 @@ function ThinkingOrb({ small, label }) {
         <i className="hw-particle p1" /><i className="hw-particle p2" /><i className="hw-particle p3" />
       </div>
       <div className="min-w-0">
-        <p className="hw-think-label">{label || "Wish soch raha hai…"}</p>
+        <p className="hw-think-label">{label || "Coach soch raha hai…"}</p>
         <span className="hw-dots"><i /><i /><i /></span>
       </div>
     </div>
@@ -2001,7 +2001,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
   const [brief, setBrief] = useState(() => readCache(`hw_coach_brief_${profile}_${dateKey}`));
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefErr, setBriefErr] = useState("");
-  const [thinkingLabel, setThinkingLabel] = useState("Wish soch raha hai…");
+  const [thinkingLabel, setThinkingLabel] = useState("Coach soch raha hai…");
   const docsRef = useRef(null);
   const docsAt = useRef(0);
   const msgsRef = useRef(msgs);
@@ -2122,14 +2122,14 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
     const text = String(quick != null ? quick : input).trim();
     if (busy) return;
     if (!text && !img) return;
-    if (!aiOn) { setErr("Pehle Settings → AI Coach me key daalo, phir Wish ka full agent mode chalega 🙂"); return; }
+    if (!aiOn) { setErr("Pehle Settings → AI Coach me key daalo, phir Coach ka full agent mode chalega 🙂"); return; }
     setErr("");
     const hasImg = !!img;
     const um = { role: "user", content: text || "Ye photo dekho", at: Date.now(), photo: hasImg };
     append(um);
     setInput("");
     setBusy(true);
-    setThinkingLabel(hasImg ? "Photo samajh raha hai…" : "Wish soch raha hai…");
+    setThinkingLabel(hasImg ? "Photo samajh raha hai…" : "Coach soch raha hai…");
     try {
       const docs = await loadDocs(true);
       const ctx = makeCtx(docs);
@@ -2163,7 +2163,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
           <div className="hw-coach-avatar">✦<span className="hw-coach-live" /></div>
           <div className="flex-1 min-w-0">
             <p className="hw-eyebrow !text-lime-200/80">AI Agent · {profile}</p>
-            <h2 className="text-[19px] font-bold leading-tight">Wish — Personal Coach</h2>
+            <h2 className="text-[19px] font-bold leading-tight">Coach — Personal AI</h2>
             <p className="text-[11px] text-neutral-400 leading-snug">History + aaj ka data dekh ke guide karta hai · bol ke data log karo</p>
           </div>
           <button onClick={() => setMsgs([])} title="Chat clear" className="hw-navbtn">🧹</button>
@@ -2200,7 +2200,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
           </>
         ) : (
           <p className={`text-[12.5px] mt-2 leading-relaxed ${briefErr ? "text-amber-300/90" : "text-neutral-400"}`}>
-            {briefErr || (aiOn ? "Coach ready hai — pehla take aa raha hai…" : "Settings → AI Coach me key daalo, phir Wish tumhe daily guide karega.")}
+            {briefErr || (aiOn ? "Coach ready hai — pehla take aa raha hai…" : "Settings → AI Coach me key daalo, phir Coach tumhe daily guide karega.")}
           </p>
         )}
       </Card>
@@ -2208,7 +2208,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
       <div className="space-y-2.5">
         {msgs.length === 0 && (
           <div className="hw-chat-empty">
-            <p className="text-[12.5px] font-semibold"><span className="text-lime-300 mr-1">✦</span> Wish se bol ke data log karo</p>
+            <p className="text-[12.5px] font-semibold"><span className="text-lime-300 mr-1">✦</span> Coach se bol ke data log karo</p>
             <p className="text-[10.5px] text-neutral-400 mt-1 leading-relaxed">
               "Dinner me 2 roti + dal" → meal + macros khud add. Photo bhejo ya kuch bhi poochho — history dekh ke guide karega.
             </p>
@@ -2241,7 +2241,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
           <div className="hw-photo-preview">
             <img src={img} alt="attachment" />
             <button onClick={() => setImg(null)} aria-label="Remove photo">✕</button>
-            <span>Photo ready — Send dabao, Wish photo se log karega</span>
+            <span>Photo ready — Send dabao, Coach photo se log karega</span>
           </div>
         )}
 
@@ -2254,7 +2254,7 @@ function CoachBoard({ profile, day, dateKey, target, partner, aiOn, applyActions
         <button onClick={() => fileRef.current && fileRef.current.click()} className="hw-attach" title="Photo bhejo">📷</button>
         <textarea rows={1} value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={aiOn ? "Wish se poochho ya log karwao…" : "Pehle AI setup karo (Settings)"}
+          placeholder={aiOn ? "Coach se poochho ya log karwao…" : "Pehle AI setup karo (Settings)"}
           disabled={!aiOn} className="hw-coach-textarea" />
         <button onClick={() => send()} disabled={busy || !aiOn || (!input.trim() && !img)} className="hw-send">➤</button>
         </div>
