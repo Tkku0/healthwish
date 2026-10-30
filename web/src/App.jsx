@@ -279,7 +279,7 @@ export default function App() {
   };
   const doneCount = (day?.tasks || []).filter((t) => t.done).length;
 
-  const applyCoachActions = useCallback((actions) => {
+  const applyCoachActions = (actions) => {
     const cur = dayRef.current;
     if (!cur || !Array.isArray(actions) || !actions.length) return [];
     const next = { ...cur };
@@ -350,7 +350,7 @@ export default function App() {
     }
     if (logs.length) persist(next);
     return logs;
-  }, [persist]);
+  };
 
   const nav = (
     <nav className="fixed bottom-3 inset-x-0 z-40 px-4">
